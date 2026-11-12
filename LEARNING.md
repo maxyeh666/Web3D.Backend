@@ -1,15 +1,61 @@
-# 學習筆記（C# 後端）
+﻿# 學習筆記（C# 後端）
 
 > 這裡記錄 C# 後端實作過程中搞懂的概念，一問一答：問題寫成脫離對話也看得懂的完整句子。
 > 對應的程式變更與設計理由見 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 主題索引
 
+---
+- **後端分層架構與請求流程** — 11-12
+- **本機使用方式與設定驗證** — 11-12
+- **EF Core 查詢翻譯與型別對照** — 11-12
 - **專案初始化與工具鏈** — 11-11
 - **C# 語法對照 TypeScript** — 11-11
 - **設定檔與啟動流程** — 11-11
 
----
+## 2026-11-12 — 分層架構、使用方式與查詢翻譯
+
+**學習筆記**
+
+- 問：ASP.NET Core 的專案分成 Controller、Service、DbContext、Entity、DTO 這幾種角色，一個 GET /assets 請求會依序經過哪些檔案？
+
+  答：請求先進 Controller（Controllers/AssetController.cs，只負責接請求、轉交、包回傳），再進 Service（Services/AssetService.cs，寫查詢邏輯），Service 透過 DbContext（Data/AppDbContext.cs，EF Core 的進入點，DbSet 對應 assets 資料表）讀出 Entity（Models/Asset.cs，對應一行資料的類別），Service 再轉成 DTO（Models/AssetSummaryDto.cs，只給前端看的形狀）回傳。對照 Node 版：routers/assets.ts 到 services/assetService.ts 到 db.ts，只是 C# 每一層都有具名型別，編譯時期就會檢查形狀對不對。
+
+- 問：Entity（實體）是什麼？它跟資料表、跟 Node.js 版直接寫 SQL 查出來的 row 有什麼不同？
+
+  答：Entity 是資料表的一行對應成的類別（Models/Asset.cs）。跟資料表的關係是一對一：屬性（Property：長得像欄位、實際帶讀寫方法的成員）對欄位，對應規則寫在 AppDbContext.OnModelCreating。跟 Node 版的差別：Node 寫 SQL 拿回的是 pg 驅動組出的普通物件，沒有型別約束，打錯欄位名要到執行才會發現；Entity 有型別，欄位名打錯編譯就失敗，查詢也寫成同一套 LINQ 語法（C# 內建的集合查詢語法，長得像 SQL 的方法鏈），不用拼 SQL 字串。
+
+- 問：依賴注入（DI）是什麼？為什麼 Controller 不自己 new AssetService，而是寫在建構子參數裡？
+
+  答：依賴注入（DI：物件不自己建立它需要的東西，而是在被建立時由框架傳進來）是把誰建立物件交給框架（Program.cs 的 builder.Services）。Controller 的建構子宣告需要 AssetService，框架收到請求時自動建立並傳入。好處是 Controller 不必知道 AssetService 怎麼建（它自己還需要 AppDbContext），要換實作或測試時只要換註冊、不改呼叫端。對照 Node 版：用 import 直接引用模組單例，沒有框架按參數型別自動組裝這一層。
+
+- 問：DI 註冊的 Scoped、Transient、Singleton 差在哪？這個專案為什麼用 Scoped？
+
+  答：三者是物件的壽命：Transient 每次要都建新的；Scoped 同一個 HTTP 請求內共用一份、請求結束釋放；Singleton 整個程式只建一份、用到的關機。AddDbContext 預設就是 Scoped，AssetService 也註冊為 Scoped：每個請求一份 DbContext，用完即丟（連線歸還到 Npgsql 的連線池），不會跨請求污染狀態。對照 Node 版沒有這種區分：模組載入一次就整個 process 共用；資料庫連線靠連線池手動借還（相當於本專案 Scoped 背後做的事）。
+
+- 問：DTO 是什麼？為什麼不直接把 Entity 回傳給前端？
+
+  答：DTO（Data Transfer Object，資料傳輸物件：只為了傳輸而定義的形狀）是給呼叫端看的形狀，Entity 是給資料庫看的形狀。兩邊需求不同：Entity 有全部欄位（含 config 整包、時間戳），前端列表只需要 id 和 name；直接回傳 Entity 會把不需要的欄位送出去，日後資料表加欄位還會直接牽動前端。用 Models/AssetSummaryDto.cs 隔開後，資料庫長什麼樣就不會影響前端契約。對照 Node 版：在 service 裡手寫挑欄位的回傳物件，這裡把挑什麼變成一個具名型別。
+
+- 問：Program.cs 沒有 Main 方法，程式從哪裡開始跑？middleware 的順序為什麼要照現在的排法？
+
+  答：.NET 6 之後支援頂層陳述式（top-level statements：不用寫 class Main，直接寫流程式碼、編譯器自動包成進入點），Program.cs 從上到下就是啟動流程：讀設定、註冊服務、建出 app、掛 middleware、Run 啟動。middleware（請求進來後會依序經過的一串處理步驟）順序有意義：UseHttpsRedirection 先處理 http 轉 https（本機沒配 https 埠時直接放行）；UseAuthorization 必須在掛路由之前，否則請求還沒檢查身分就進 Controller；掛路由相當於 Node 版掛路由器的那幾行。
+
+- 問：本機要怎麼把這個後端跑起來？連線字串放在哪裡、怎麼確認真的連上資料庫？
+
+  答：三步。先確保資料表存在（目前由 Node.js 版套用 000 到 004 的 migration，C# 版不執行）。再用 dotnet user-secrets set 寫入 ConnectionStrings:DefaultConnection（存在本機個人資料夾、不進版控；key 名稱由程式碼決定）。最後 dotnet run（http://localhost:3000），另開終端機打 curl.exe http://localhost:3000/assets，預期回一串資產陣列，即代表設定、連線、查詢、路由全通。連不上時看訊息屬於哪一層：The ConnectionString property has not been initialized 是設定層（值是空的）；42P01 是資料表不存在。
+
+- 問：dotnet user-secrets 的 key 名稱是怎麼決定的？打錯字會出現什麼錯誤，要怎麼從訊息反推原因？
+
+  答：key 由程式碼決定，不是隨便取：GetConnectionString 一律去找 ConnectionStrings 加上括號裡的名字。打錯（例如少一個 s）時設定系統找不到值、回傳空字串；空字串傳進 UseNpgsql 在啟動時不會檢查，直到第一次真的查詢才由 Npgsql 拋出 The ConnectionString property has not been initialized。反推方法：訊息裡出現沒有被初始化代表 Npgsql 拿到的是空值，沿程式碼往回查設定來源（appsettings 到 user-secrets），用 dotnet user-secrets list 對照程式裡的字串，即可找到打錯的 key。
+
+- 問：EF Core 的 LINQ 查詢什麼時候才會真的打資料庫？Id.ToString() 為什麼能變成 SQL 的 CAST？
+
+  答：LINQ 方法（Where、OrderBy、Select）只是組裝查詢描述、不執行，叫延遲執行（先描述要什麼資料，真正需要時才執行；JS 的 map 與 filter 是立即執行，這裡相反）。ToListAsync 那一刻，EF Core 才把整段翻譯成一條 SQL 送出去。Id.ToString 能翻譯，是因為 Npgsql 的 provider 內建了一批 C# 方法對 SQL 寫法的對應（long 的 ToString 對應 CAST(id AS text)）；能翻譯的在資料庫端執行、不能翻譯的會拋錯，本次查詢已實測通過。
+
+- 問：同一筆資料在 PostgreSQL、C#、JSON 三層的型別怎麼對照？
+
+  答：對照點有四個。id 是 BIGINT（64 位元整數）到 C# 用 long 接（64 位元整數型別）到 JSON 給字串，因為 BIGINT 會超過 JS 的安全整數範圍（2 的 53 次方減 1，超過後數字失真），做法與 Node 版 pg 驅動預設一致；config 是 jsonb（PostgreSQL 的一種欄位型別，可以直接把 JSON 物件存進資料庫）到 C# 先用 string 接整包，之後需要強型別再換 JsonDocument；updated_at 是 timestamptz（含時區的時間戳）到 C# 用 DateTimeOffset 接；自動編號是 GENERATED ALWAYS AS IDENTITY 到 C# 用 UseIdentityAlwaysColumn 對應，新增時不要自己塞 Id（塞了會被忽略）。
 
 ## 2026-11-11 — 專案初始化、語法對照與設定載入
 
@@ -40,3 +86,5 @@
   `dotnet user-secrets set "Jwt:Key" "..."` 把私密值存在本機個人資料夾的 JSON 檔，只在 Development 環境載入、不進版控；它取代的是 `.env` 的位置，但粒度不同——`.env` 是整個檔案一份，user-secrets 是按 key 一筆一筆存。部署時改由平台環境變數提供，與 Node 版相同（`DATABASE_URL` 等名稱不變），所以正式環境不需要任何本機檔案。
 
   指令對照：`dotnet run` 是編譯並執行（對應 `npm run dev`），`dotnet build` 是只編譯不執行（對應 `npm run build`），產物放在 `bin/` 與 `obj/`（對應 `dist/`，皆不進版控）。`launchSettings.json` 的 `applicationUrl`（目前 `http://localhost:5154`）只影響 `dotnet run`，Phase 1 會改為 `3000` 與前端預設一致。
+
+---
