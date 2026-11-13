@@ -1,21 +1,52 @@
 ﻿# 學習筆記（C# 後端）
 
-> 這裡記錄 C# 後端實作過程中搞懂的概念，一問一答：問題寫成脫離對話也看得懂的完整句子。
+> 大主題（跨日累積的概念）說明拆到 `docs/learning/`，按天日誌、問答與小型主題留在這裡。
 > 對應的程式變更與設計理由見 [CHANGELOG.md](./CHANGELOG.md)。
 
-## 主題索引
+## 大主題（說明在主題檔）
 
----
-- **後端分層架構與請求流程** — 11-12
-- **本機使用方式與設定驗證** — 11-12
-- **EF Core 查詢翻譯與型別對照** — 11-12
-- **專案初始化與工具鏈** — 11-11
-- **C# 語法對照 TypeScript** — 11-11
-- **設定檔與啟動流程** — 11-11
+- [C# 語言基礎與 TypeScript 對照](./docs/learning/csharp-basics.md) — 型別、可空性、`is null`、out 與 TryParse、例外處理
+- [EF Core：查詢翻譯、型別對應與預設值](./docs/learning/ef-core.md) — 查詢翻譯、延遲執行、三層型別對照、欄位預設值
+- [ASP.NET Core：啟動、請求管線、分層與 DI](./docs/learning/aspnet-core.md) — 啟動流程、請求管線、路由、繫結、驗證、DI、分層、設定來源
 
-## 2026-11-12 — 分層架構、使用方式與查詢翻譯
+## 本檔主題
 
-**學習筆記**
+- 專案骨架：`dotnet new webapi` 產生哪些檔案 — 11-11
+- JSON 讀取與時間輸出（`JsonDocument`、`DateTimeOffset` 與格式字串） — 11-13
+
+## 本檔小主題
+
+### 專案骨架
+
+樣板產生六類檔案。`Web3D.Backend.csproj`（XML 格式的專案檔）列出目標框架（`net10.0`，即 .NET 10）與 NuGet 套件（.NET 的套件來源，相當於 npm registry），地位等同 Node 版的 `package.json`；`dotnet add package` 相當於 `npm install <套件>`，`dotnet restore` 相當於 `npm install`（下載全部套件）。目前唯一的套件是 `Microsoft.AspNetCore.OpenApi`（自動產生 API 規格文件的官方套件，實作階段才會用到）。
+
+`Program.cs` 是啟動檔，對應 Node 版的 `src/index.ts`：`WebApplication.CreateBuilder(args)` 建立應用程式建構器，`builder.Services.AddControllers()` 把控制器註冊進依賴注入容器（框架內建的物件工廠，負責建立並提供各類別的實例），`builder.Build()` 建出應用本體，`app.MapControllers()` 掛上路由（相當於 `app.use('/assets', assetsRouter)` 那三行），`app.Run()` 啟動監聽（相當於 `app.listen(PORT)`）。
+
+`appsettings.json` / `appsettings.Development.json` 是 JSON 設定檔，對應 Node 版的 `.env` 加讀取邏輯。`Properties/launchSettings.json` 只有用 `dotnet run` 或 IDE 按 F5 啟動時有效（決定埠與環境變數），部署後無效，可視為本機啟動參數。`Web3D.Backend.http` 是樣板附的手動測試檔，因指向專案沒有的 `/weatherforecast` 已刪除，待 Phase 1 有真端點後重建。`.gitignore` 由 `dotnet new gitignore` 產生，`bin/` 與 `obj/`（編譯產物，對應 Node 版的 `dist/`）已排除在版控外。
+
+### JSON 讀取與時間輸出
+
+`JsonDocument.Parse` 把 JSON 字串解析成一份唯讀文件，`RootElement` 是進入點，型別為 `JsonElement`（指向文件內部資料的檢視，本身不擁有資料）。文件被釋放（離開 `using` 範圍）之後，裡面的 `JsonElement` 就失效，之後存取會拋 `ObjectDisposedException`。`Clone()` 把該節點複製成獨立、不依賴文件的資料，所以「解析、取節點、Clone、釋放文件、回傳複本」是固定順序。若需要修改內容，則改用 `JsonNode`（可修改的 JSON 物件樹）。
+
+`DateTimeOffset` 除了時間也帶時區位移（例如 +08:00），不同時區的同一瞬間可以正確比較；`DateTime` 只有時間，時區靠額外約定。資料庫的 timestamptz（含時區的時間戳）對應到 `DateTimeOffset`。輸出前先呼叫 `ToUniversalTime()`（把時間點換算成 UTC）：資料庫讀出的值可能帶本地位移，直接格式化會把本地時間標上代表 UTC 的 `Z`，等於回報錯誤的時間點。
+
+格式化使用 `CultureInfo`（地區設定：記錄語言、數字寫法、日期寫法與採用的曆法）。`.ToString()` 沒指定時使用執行緒當下的文化，而伺服器的文化設定不在程式控制範圍內。泰國文化預設採佛曆（年分加 543 年）、沙烏地阿拉伯採伊斯蘭曆；`InvariantCulture`（不屬於任何國家的中性文化，固定西曆與西文數字）輸出因此可預測。這是 .NET 才有的概念：JavaScript 的 `Date.toISOString()` 一律輸出 UTC 與西曆，沒有等價選項。
+
+## 2026-11-13 — 實作單筆讀取與更新
+
+**問答**
+- 問：`JsonElement` 是什麼？為什麼 `AssetDetailDto.Config` 用它，而 `Asset.Config`（Entity）用 `string`？
+
+  答：`JsonElement` 是 JSON 值在記憶體裡的檢視（指向文件內部資料，本身不擁有資料；文件釋放後再用會拋 `ObjectDisposedException`）。DTO 用它是因為前端要收到真正的 JSON 物件（本檔小主題「JSON 讀取」段有完整說明）。Entity 用 `string` 是因為 config 內容隨資產變化，先整包存取；以後要強型別再換 `JsonDocument`，到時只改這個屬性型別。
+
+- 問：`JsonObjectOnlyAttribute` 是什麼？跟 `[Required]` 有什麼關係？
+
+  答：它是自訂的驗證屬性，繼承 `ValidationAttribute` 並覆寫 `IsValid`（檢查 `JsonElement.ValueKind` 是不是物件），寫法照抄 `aspnet-core.md`「模型驗證」段說的固定模式。`[Required]` 只保證 Name 有值，保證不了「config 內部是物件」，所以要再寫一個；兩個都通過才會進入 Action，這是框架層的保證。
+
+
+## 2026-11-12 — 骨架與唯讀 API
+
+建出可跑的骨架與第一支唯讀端點 GET /assets。概念說明已搬到主題檔：分層、DI、啟動流程見 aspnet-core，查詢翻譯與型別對照見 ef-core。
 
 - 問：ASP.NET Core 的專案分成 Controller、Service、DbContext、Entity、DTO 這幾種角色，一個 GET /assets 請求會依序經過哪些檔案？
 
@@ -57,10 +88,12 @@
 
   答：對照點有四個。id 是 BIGINT（64 位元整數）到 C# 用 long 接（64 位元整數型別）到 JSON 給字串，因為 BIGINT 會超過 JS 的安全整數範圍（2 的 53 次方減 1，超過後數字失真），做法與 Node 版 pg 驅動預設一致；config 是 jsonb（PostgreSQL 的一種欄位型別，可以直接把 JSON 物件存進資料庫）到 C# 先用 string 接整包，之後需要強型別再換 JsonDocument；updated_at 是 timestamptz（含時區的時間戳）到 C# 用 DateTimeOffset 接；自動編號是 GENERATED ALWAYS AS IDENTITY 到 C# 用 UseIdentityAlwaysColumn 對應，新增時不要自己塞 Id（塞了會被忽略）。
 
-## 2026-11-11 — 專案初始化、語法對照與設定載入
 
-**學習筆記**
+## 2026-11-11 — 專案初始化
 
+專案初始化：dotnet new webapi 骨架。C# 語法對照見 csharp-basics，設定來源與覆寫順序見 aspnet-core；專案骨架段留在本檔（一次性、不會再長）。
+
+**問答**
 - 問：`dotnet new webapi` 產生了哪些檔案，各自對應 Node.js 版的什麼東西？
 
   答：樣板產生六類檔案。`Web3D.Backend.csproj`（XML 格式的專案檔）列出目標框架（`net10.0`，即 .NET 10）與 NuGet 套件（.NET 的套件來源，相當於 npm registry），地位等同 Node 版的 `package.json`；`dotnet add package` 相當於 `npm install <套件>`，`dotnet restore` 相當於 `npm install`（下載全部套件）。目前唯一的套件是 `Microsoft.AspNetCore.OpenApi`（自動產生 API 規格文件的官方套件，實作階段才會用到）。
@@ -87,4 +120,3 @@
 
   指令對照：`dotnet run` 是編譯並執行（對應 `npm run dev`），`dotnet build` 是只編譯不執行（對應 `npm run build`），產物放在 `bin/` 與 `obj/`（對應 `dist/`，皆不進版控）。`launchSettings.json` 的 `applicationUrl`（目前 `http://localhost:5154`）只影響 `dotnet run`，Phase 1 會改為 `3000` 與前端預設一致。
 
----

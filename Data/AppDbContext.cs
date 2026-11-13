@@ -37,10 +37,25 @@ namespace Web3D.Backend.Data
                 entity.Property(asset => asset.Name).HasColumnName("name").HasColumnType("text").IsRequired();
                 // jsonb 在 C# 這邊先用 string 接整包 JSON（整包存、整包取，不拆欄位）。
                 // 理由：config 的內容會隨資產類型變化；以後需要強型別再換成 JsonDocument，屆時只要改這個屬性型別。
-                entity.Property(asset => asset.Config).HasColumnName("config").HasColumnType("jsonb").IsRequired();
-                entity.Property(asset => asset.UpdatedAt).HasColumnName("updated_at").HasColumnType("timestamp with time zone").IsRequired();
-                entity.Property(asset => asset.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone").IsRequired();
-                entity.Property(asset => asset.ModelKey).HasColumnName("model_key").HasColumnType("text").IsRequired();
+                entity.Property(asset => asset.Config)
+                    .HasColumnName("config")
+                    .HasColumnType("jsonb")
+                    .IsRequired();
+                entity.Property(asset => asset.UpdatedAt)
+                    .HasColumnName("updated_at")
+                    .HasColumnType("timestamp with time zone")
+                    .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                    .IsRequired();
+                entity.Property(asset => asset.CreatedAt)
+                    .HasColumnName("created_at")
+                    .HasColumnType("timestamp with time zone")
+                    .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                    .ValueGeneratedOnAdd()
+                    .IsRequired();
+                entity.Property(asset => asset.ModelKey)
+                    .HasColumnName("model_key")
+                    .HasColumnType("text")
+                    .IsRequired();
             });
         }
     }

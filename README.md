@@ -1,4 +1,4 @@
-# Web 3D Viewer Backend（C#）
+﻿# Web 3D Viewer Backend（C#）
 
 3D Viewer 的後端，以 ASP.NET Core 實作。
 API 規格沿用 Node.js 版（[web3D_proto_backend](https://github.com/maxyeh666/web3D_proto_backend)）：
@@ -110,7 +110,11 @@ Web3D.Backend/
 │                   AssetSummaryDto.cs     回傳給前端的形狀（只有 id / name）
 ├── Program.cs                         DI 註冊與 middleware 設定
 ├── appsettings.json                   非機密設定（連線字串留空，由 user-secrets 補）
-└── Properties/launchSettings.json     本機啟動參數（埠 3000）
+├── Properties/launchSettings.json     本機啟動參數（埠 3000）
+| └── docs/learning/                     筆記：architecture（架構總覽）
+|                                         ＋csharp-basics（C# 與 TS 對照）
+|                                         ＋ef-core（查詢翻譯與型別對應）
+|                                         ＋aspnet-core（啟動、請求管線、DI、分層）
 ```
 
 ## 共用且不可變動的部分
