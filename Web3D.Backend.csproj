@@ -8,9 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- JwtBearer：驗證請求帶來的 token（認證）。 -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.14" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- Tokens.Jwt：簽發 token 用的 JwtSecurityToken（簽在這包，驗在 JwtBearer 那包）。 -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
   </ItemGroup>
 
 </Project>

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Web3D.Backend.Services;
 using Web3D.Backend.Models;
 
@@ -45,6 +46,8 @@ namespace Web3D.Backend.Controllers
         }
 
         [HttpPut("{id}")]
+        // 只有寫入要管理員：讀取（GET）公開；更新必須帶合法 token，且 token 的 role 為 admin。
+        [Authorize(Roles = "admin")]
         public async Task<IActionResult> UpdateAsset(string id, UpdateAssetDto updateAssetDto)
         {
             // TODO: 暫時驗證，之後error handling要統一處理，這裡先簡單判斷id是否為正整數

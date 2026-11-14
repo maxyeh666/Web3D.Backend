@@ -8,11 +8,14 @@
 - [C# 語言基礎與 TypeScript 對照](./docs/learning/csharp-basics.md) — 型別、可空性、`is null`、out 與 TryParse、例外處理
 - [EF Core：查詢翻譯、型別對應與預設值](./docs/learning/ef-core.md) — 查詢翻譯、延遲執行、三層型別對照、欄位預設值
 - [ASP.NET Core：啟動、請求管線、分層與 DI](./docs/learning/aspnet-core.md) — 啟動流程、請求管線、路由、繫結、驗證、DI、分層、設定來源
+- [JWT 登入與授權](./docs/learning/auth.md) — token 結構、HS256、claim、認證與授權、MapInboundClaims、ClockSkew、密碼比對、簽發型別鏈
+- [.NET 套件：找、裝、自己寫](./docs/learning/dotnet-packages.md) — 需求分類、三層階梯（BCL／共享框架／獨立套件）、查法、自製界線 — 11-14
 
 ## 本檔主題
 
 - 專案骨架：`dotnet new webapi` 產生哪些檔案 — 11-11
 - JSON 讀取與時間輸出（`JsonDocument`、`DateTimeOffset` 與格式字串） — 11-13
+- 認證與授權（JWT、HS256、claim、MapInboundClaims） — 11-14
 
 ## 本檔小主題
 
@@ -31,6 +34,26 @@
 `DateTimeOffset` 除了時間也帶時區位移（例如 +08:00），不同時區的同一瞬間可以正確比較；`DateTime` 只有時間，時區靠額外約定。資料庫的 timestamptz（含時區的時間戳）對應到 `DateTimeOffset`。輸出前先呼叫 `ToUniversalTime()`（把時間點換算成 UTC）：資料庫讀出的值可能帶本地位移，直接格式化會把本地時間標上代表 UTC 的 `Z`，等於回報錯誤的時間點。
 
 格式化使用 `CultureInfo`（地區設定：記錄語言、數字寫法、日期寫法與採用的曆法）。`.ToString()` 沒指定時使用執行緒當下的文化，而伺服器的文化設定不在程式控制範圍內。泰國文化預設採佛曆（年分加 543 年）、沙烏地阿拉伯採伊斯蘭曆；`InvariantCulture`（不屬於任何國家的中性文化，固定西曆與西文數字）輸出因此可預測。這是 .NET 才有的概念：JavaScript 的 `Date.toISOString()` 一律輸出 UTC 與西曆，沒有等價選項。
+
+### 認證與授權
+
+登入流程：`POST /auth/login` 用 `FixedTimeEquals` 比對管理員密碼，通過就簽一張 HS256 的 JWT（payload 只有 `role: admin`，15 分鐘有效）；之後的寫入請求帶 `Authorization: Bearer <token>`，由 `UseAuthentication` 驗簽、`UseAuthorization` 執行 `[Authorize(Roles = "admin")]`。`MapInboundClaims` 必須關掉，否則框架會把 `role` 改名，角色就比不到了；`ClockSkew` 設 0，與 Node 版的過期判斷一致。各概念的完整說明見主題檔 [JWT 登入與授權](./docs/learning/auth.md)。
+
+## 2026-11-14 — 登入、JWT 與寫入權限
+
+新增 POST /auth/login（簽發 15 分鐘有效的 JWT）、PUT /assets/{id} 加管理員驗證、GET /health 與 /health/db。完整概念說明見主題檔 [JWT 登入與授權](./docs/learning/auth.md)。
+
+- 問：登入簽章為什麼用 `HmacSha256`？`Sha256` 看起來也是 SHA256，不行嗎？
+
+  答：不行。`Sha256` 是雜湊演算法常數，`HmacSha256`（值 HS256）才是簽章演算法常數。簽章用錯常數，簽 token 時框架找不到對應實作就丟例外，`POST /auth/login` 直接回 500——本次就是這樣修好的。Node 版 `constants/jwt.ts` 的 `HS256` 是同一個東西。
+
+- 問：`RoleClaimType` 已經設成 `role`，token 裡也有 `role: admin`，為什麼 `[Authorize(Roles = "admin")]` 還是 403？
+
+  答：框架預設的 inbound claim mapping 會把 `role` 改寫成 `ClaimTypes.Role` 的長 URI，改寫後就沒有名叫 `role` 的 claim 可比。解法是 `options.MapInboundClaims = false`，讓 claim 保持簽發時的原名；這樣也跟 Node 版的 payload 一字相同。完整說明見主題檔「MapInboundClaims 與 RoleClaimType」段。
+
+- 問：`JwtSecurityToken`、`SymmetricSecurityKey` 那些型別是哪來的，怎麼知道要裝哪個套件？
+
+  答：型別的逐行對照在主題檔 [JWT 登入與授權](./docs/learning/auth.md)「`CreateToken` 逐行對照」段（例如 `SymmetricSecurityKey` 是金鑰物件、`WriteToken` 才產出真正回給前端的字串）；「怎麼知道要裝哪個套件」的完整流程在新主題檔 [.NET 套件：找、裝、自己寫](./docs/learning/dotnet-packages.md)。一句話版本：`[Authorize]` 本體在共享框架內，不用裝；`AddJwtBearer` 的驗證處理器被移出框架，一定要裝獨立套件。
 
 ## 2026-11-13 — 實作單筆讀取與更新
 
