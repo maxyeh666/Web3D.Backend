@@ -8,7 +8,7 @@
 
 `Program.cs` 沒有 Main 方法：.NET 6 之後支援頂層陳述式（top-level statements：不用寫 class Main，直接寫流程式碼、編譯器自動包成進入點），`Program.cs` 從上到下就是啟動流程：讀設定、註冊服務、建出 app、掛 middleware、`Run` 啟動。`WebApplication.CreateBuilder(args)` 建立應用程式建構器，`builder.Services.AddControllers()` 把控制器註冊進依賴注入容器，`builder.Build()` 建出應用本體，`app.MapControllers()` 掛上路由，`app.Run()` 啟動監聽。
 
-middleware（請求進來後會依序經過的一串處理步驟）順序有意義：`UseHttpsRedirection` 先處理 http 轉 https（本機沒配 https 埠時直接放行）；`UseAuthorization` 必須在掛路由之前，否則請求還沒檢查身分就進 Controller；掛路由相當於 Node 版掛路由器的那幾行。（註：本專案目前沒有註冊任何認證機制，這行現在不作用；等 Phase 4 登入實作後才會生效。）
+middleware（請求進來後會依序經過的一串處理步驟）順序有意義：`UseMiddleware<ExceptionMiddleware>` 掛最外層，才接得到下游任一站拋出的例外（見[統一錯誤處理](./error-handling.md)）；`UseHttpsRedirection` 先處理 http 轉 https（本機沒配 https 埠時直接放行）；`UseAuthentication` 驗 token、`UseAuthorization` 執行 `[Authorize]`，兩者都必須在掛路由之前，否則請求還沒檢查就進 Controller；掛路由相當於 Node 版掛路由器的那幾行。
 
 ## 請求管線：routing、model binding、model validation
 
@@ -40,7 +40,7 @@ Controller 版的路由叫屬性路由（attribute routing）：類別上的 `[R
 
 驗證結果集中在 ModelState（以屬性名稱為 key 的錯誤清單）。`[ApiController]` 的行為是：ModelState 有錯就自動回 400、不進入 Action，回應本文預設為 ProblemDetails（微軟定義的錯誤格式，欄位為 title、status、errors）。因為驗證發生在 Action 之前，Action 沒被執行就不可能呼叫 Service 寫入資料庫，這是框架層的保證，不需要在 Action 內再檢查一次。
 
-若要讓 400 的回應本文符合專案契約，就覆寫 `ApiBehaviorOptions.InvalidModelStateResponseFactory`。
+本專案已覆寫 `ApiBehaviorOptions.InvalidModelStateResponseFactory`，驗證失敗改回契約形狀的 `INVALID_REQUEST_BODY`（不是預設的 ProblemDetails）。注意註冊順序：`Configure<ApiBehaviorOptions>` 必須寫在 `AddControllers()` 之後，否則將被框架內建的預設值覆寫——本次曾因此設定失效（詳見 LEARNING.md 2026-11-15 段第一則）。四個錯誤出口的完整說明見[統一錯誤處理](./error-handling.md)。
 
 ## 依賴注入與物件生命週期
 

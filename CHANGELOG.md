@@ -2,6 +2,75 @@
 
 依日期記錄後端的變更與設計決策。
 
+## 2026-11-15 — 錯誤格式與 Node 版對齊
+
+**背景**
+- Node 版已上線，錯誤契約寫死為 `{"error":{"code","message"}}`；C# 版先前實作的端點有 5 處偏離：400 回 `{"error":"字串"}`、404 回空本文、未帶 token 的 401 回空本文、未知路由回空本文、未處理例外沒有統一本文。
+- 改畢以 11 個實際請求逐一確認，途中發現一處啟動順序問題（見設計決策第 4 點）。
+
+**變更**
+- 新增 Models/ApiErrorResponse.cs：錯誤回應之外層（`Error` 包裝 `ApiErrorDetail`，內含 `code` 與 `message`）。
+- 新增 Constants/ApiErrors.cs：8 個錯誤碼常數，與 Node 版 errorDefinition.ts 對齊。
+- 新增 Middleware/ExceptionMiddleware.cs：攔截下游例外，統一回 500 `INTERNAL_SERVER_ERROR`；完整堆疊只寫 log，回應不帶細節；掛在管線最前。
+- Program.cs：`OnChallenge`／`OnForbidden` 改寫統一的 401／403 JSON（攔下框架預設空本文）；`InvalidModelStateResponseFactory` 改回 `ApiErrors.InvalidRequestBody`；新增 `MapFallback("{*path}")`，未知路徑一律回同一份 404；`JWT_SECRET` 未設定即啟動失敗。
+- Controllers/AssetController.cs：400／404 改用 `ApiErrors.InvalidAssetId`／`AssetNotFound`，移除手寫匿名物件與舊 TODO。
+- Controllers/AuthController.cs：密碼錯誤改用 `ApiErrors.InvalidCredentials`；檔尾多餘之 `;` 一併移除。
+- 同步修正過期與誤導的程式註解（不影響行為，純風格）。
+
+**設計決策**
+- 錯誤碼集中於 ApiErrors，不散置各 Controller：8 個錯誤碼若散置五處，修改時須同步變更五處；每次呼叫回傳新物件，呼叫端縱使修改內容，亦不影響其他請求。
+- ExceptionMiddleware 掛管線最前：中介層僅能攔截下游例外；置於後方將無法涵蓋前方站點。
+- MapFallback 顯式指定 `"{*path}"`：預設 fallback 排除形如檔名的路徑；若未指定，`/nope.json` 之回應為空本文（此差異經由實際請求確認）。
+- `Configure<ApiBehaviorOptions>` 必須在 `AddControllers()` 之後：選項依註冊順序疊加，先寫入者會被框架內建預設值覆寫。本次唯一的實質錯誤：編譯與靜態檢查皆無法發現，經由送出不合法 JSON 之實際請求方予確認。
+- 400 一律 `INVALID_REQUEST_BODY`：Node 版 JSON 解析失敗與內容不合規回同一個碼。
+- `/health/db` 刻意不套錯誤格式：維運端點（負載平衡器、喚醒檢查），非供前端解析；與 Node 版形狀相同。
+- `MODEL_NOT_FOUND` 暫未列入：對應之 `GET /models/{modelKey}` 尚未實作，現階段新增將無使用端。
+
+**學習筆記**
+- 6 則，見 LEARNING.md 的 2026-11-15 段（選項註冊順序、`MapFallback` 的 `{*path}`、`OnChallenge` 與空本文 401、`Build()` 每次建新物件、靜態內容修改後須重新編譯、換語言重寫時規格是否一致）；錯誤四出口寫成主題檔 `docs/learning/error-handling.md`。
+
+**已知限制 / 後續**
+- 新發現：`long.TryParse` 仍接受 `+1`、` 1` 等寬鬆輸入，與 Node 版「1-9 開頭」有差；要完全對齊需逐字元檢查。
+- 刻意保留：`/health/db` 失敗回 `{ "status": "error" }`，不列入錯誤格式（維運端點；與 Node 版一致）。
+- 新缺口：`GET /models/{modelKey}` 未實作，`MODEL_NOT_FOUND` 待那時補。
+- 11-13 則「400 本文形狀待 Phase 3」已解決（歷史則不回改）。
+
+## 2026-11-14 — 登入、JWT 與寫入權限
+
+**背景**
+- Phase 4 缺 `POST /auth/login`；`PUT /assets/{id}` 自 11-13 起無任何驗證（Node 版有 `requireAdmin`），權限缺口需一併補上。
+- 部署環境需要健康檢查端點：負載平衡器與冷啟動喚醒須有一支不查資料庫的輕量探測，另須一支確認資料庫連線狀況。
+
+**變更**
+- 新增 `Controllers/AuthController.cs`：`POST /auth/login`，密碼正確回 `{ token }`，錯誤回 401（回應本文於 11-15 統一為契約形狀）。
+- 新增 `Services/AuthService.cs`：驗證 `ADMIN_PASSWORD` 並簽發 HS256 token（claims 為 `role=admin` 與 `iat`，效期 15 分鐘）。
+- 新增 `Models/LoginDto.cs`：登入請求本文僅 `password` 一個欄位；缺欄位與空字串皆於模型驗證階段回 400。
+- 新增 `Controllers/HealthController.cs`：`GET /health` 回 `{status:"ok"}`、不查資料庫；`GET /health/db` 以 `CanConnectAsync` 實際連線並回 `durationMs`，失敗回 500 `{status:"error"}`。
+- `Controllers/AssetController.cs`：`PUT /assets/{id}` 加 `[Authorize(Roles = "admin")]`。
+- `Program.cs`：`AddAuthentication` 加 `AddJwtBearer`（`MapInboundClaims = false`、`RoleClaimType = "role"`），並加入 `UseAuthentication`／`UseAuthorization`。
+- `Web3D.Backend.csproj`：新增 `Microsoft.AspNetCore.Authentication.JwtBearer`。
+- README 更新 Tech Stack（JWT HS256）與 Roadmap；新增主題檔 `docs/learning/auth.md`、`docs/learning/dotnet-packages.md`。
+
+**設計決策**
+- 簽章演算法採 `HmacSha256`（HS256）而非 `Sha256`：後者為雜湊演算法常數，簽章階段找不到對應實作即拋例外（本次實際發生，登入端點回 500）。與 Node 版 `JWT_ALGORITHM` 同值。
+- `MapInboundClaims = false`：框架預設將 `role` 改寫為 `ClaimTypes.Role` 的長 URI，改寫後 `[Authorize(Roles = "admin")]` 找不到名為 `role` 的 claim，回應為 403；關閉改寫後 claim 保持簽發時原名，亦與 Node 版 payload 一致。
+- 效期 15 分鐘、claims 僅 `role` 與 `iat`：與 Node 版 `TOKEN_EXPIRES_IN = "15m"` 一致；`iat` 以 `ClaimValueTypes.Integer64` 宣告為整數，否則將存為字串而與 Node 版簽出之 payload 不同。
+- 密碼比對採 `CryptographicOperations.FixedTimeEquals`：一般相等判斷於首個相異字元即回傳，可依回應時間差反推密碼；固定時間比對每次皆比完整段。長度不同直接回 false，對應 Node 版先比長度再 `timingSafeEqual`。
+- `LoginDto` 以 `[Required(AllowEmptyStrings = true)]` 搭配 `[MinLength(1)]`：缺欄位與空字串兩種情況皆落在模型驗證、均回 400，Action 內不需另寫判斷。
+- `/health` 與 `/health/db` 分兩支：前者供負載平衡器與冷啟動喚醒高頻探測，不應因資料庫短暫緩慢而誤判服務失效；後者方實際連線，並回 `durationMs` 以區分資料庫緩慢與網路延遲。
+- JWT 驗證處理器以獨立套件提供：`[Authorize]` 本體位於共享框架內，`AddJwtBearer` 所需之處理器已移出框架，須另行安裝。
+
+**學習筆記**
+- 3 則，見 LEARNING.md 的 2026-11-14 段（`HmacSha256` 與 `Sha256` 之差異、`MapInboundClaims` 與 `Roles` 授權、JWT 型別所屬套件）；主題寫入 `docs/learning/auth.md` 與 `docs/learning/dotnet-packages.md`。
+
+**已知限制 / 後續**
+- 11-13 則「PUT 沒有管理者 token 驗證」已解決（歷史則不回改）。
+- 統一錯誤格式仍待 Phase 3：未帶 token 的 401 與未知路由回空本文（11-15 已完成）。
+- `ADMIN_PASSWORD`、`JWT_SECRET` 未設定時於呼叫當下才拋例外，啟動階段不檢查（11-15 已改為啟動即失敗）。
+- token 無撤銷機制：登出僅由前端丟棄 token，效期內仍可使用；現階段以 15 分鐘短效期為唯一控制手段。
+- `GET /models/{modelKey}` 尚未實作，為 Phase 4 剩項。
+- 前端尚未以 `VITE_API_BASE_URL` 指向本服務實測登入（Phase 5）。
+
 ## 2026-11-13 — 單筆讀取、更新回傳與筆記拆檔
 
 **背景**

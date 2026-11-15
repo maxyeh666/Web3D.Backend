@@ -24,15 +24,9 @@ namespace Web3D.Backend.Data
                 entity.ToTable("assets");
                 // 設定主鍵為 Id 欄位
                 entity.HasKey(asset => asset.Id);
-                // 設定欄位名稱與屬性
-                // Id 欄位對應到資料表的 "id" 欄位，並使用自動增量主鍵
-                // Name 欄位對應到資料表的 "name" 欄位，資料型別為 text，且為必填欄位
-                // Config 欄位對應到資料表的 "config" 欄位，資料型別為 jsonb，且為必填欄位
-                // UpdatedAt 欄位對應到資料表的 "updated_at" 欄位，資料型別為 timestamp with time zone，且為必填欄位
-                // CreatedAt 欄位對應到資料表的 "created_at" 欄位，資料型別為 timestamp with time zone，且為必填欄位
-                // ModelKey 欄位對應到資料表的 "model_key" 欄位，資料型別為 text，且為必填欄位
-                // 對應 SQL：id BIGINT GENERATED ALWAYS AS IDENTITY（自動遞增主鍵），
-                // 所以程式新增資料時不要自己塞 Id——資料庫會自己編號（把你塞的值直接忽略掉）。
+                // 欄位名、型別、必填直接看下面的程式碼（HasColumnName / HasColumnType / IsRequired），這裡只記程式碼看不出來的：
+                // - Id 是 GENERATED ALWAYS（自動遞增主鍵）：新增資料不要自己塞，資料庫會忽略你塞的值。
+                // - UpdatedAt 由程式寫入（Service 設 UtcNow）；CreatedAt 靠資料庫預設值，只在新增時產生。
                 entity.Property(asset => asset.Id).HasColumnName("id").UseIdentityAlwaysColumn();
                 entity.Property(asset => asset.Name).HasColumnName("name").HasColumnType("text").IsRequired();
                 // jsonb 在 C# 這邊先用 string 接整包 JSON（整包存、整包取，不拆欄位）。

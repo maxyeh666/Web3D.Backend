@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Web3D.Backend.Services;
 using Web3D.Backend.Models;
+using Web3D.Backend.Constants;
 
 namespace Web3D.Backend.Controllers
 {
@@ -32,15 +33,14 @@ namespace Web3D.Backend.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetAssetDetail(string id)
         {
-            // TODO: 暫時驗證，之後error handling要統一處理，這裡先簡單判斷id是否為正整數
             if (!long.TryParse(id, out var assetId) || assetId <= 0)
             {
-                return BadRequest(new { error = "Invalid asset ID format." });
+                return BadRequest(ApiErrors.InvalidAssetId);
             }
             var asset = await _assetService.GetAssetDetailByIdAsync(assetId);
             if (asset is null)
             {
-                return NotFound();
+                return NotFound(ApiErrors.AssetNotFound);
             }
             return Ok(asset);
         }
@@ -50,15 +50,14 @@ namespace Web3D.Backend.Controllers
         [Authorize(Roles = "admin")]
         public async Task<IActionResult> UpdateAsset(string id, UpdateAssetDto updateAssetDto)
         {
-            // TODO: 暫時驗證，之後error handling要統一處理，這裡先簡單判斷id是否為正整數
             if (!long.TryParse(id, out var assetId) || assetId <= 0)
             {
-                return BadRequest(new { error = "Invalid asset ID format." });
+                return BadRequest(ApiErrors.InvalidAssetId);
             }
             var asset = await _assetService.UpdateAssetAsync(assetId, updateAssetDto);
             if (asset is null)
             {
-                return NotFound();
+                return NotFound(ApiErrors.AssetNotFound);
             }
             return Ok(asset);
         }

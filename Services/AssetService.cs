@@ -45,8 +45,8 @@ namespace Web3D.Backend.Services
 
             return ToDetailDto(asset);
         }
-        // 根據資產 ID 更新資產資訊，並回傳是否成功
-        // 如果找不到資產，回傳 false
+        // 根據資產 ID 更新資產資訊。更新後回傳完整資料（給 PUT 回 200 用），
+        // 找不到資產回 null。
         public async Task<AssetDetailDto?> UpdateAssetAsync(long id, UpdateAssetDto updateAssetDto)
         {
             var asset = await _dbContext.Assets.FirstOrDefaultAsync(asset => asset.Id == id);

@@ -10,6 +10,7 @@
 - [ASP.NET Core：啟動、請求管線、分層與 DI](./docs/learning/aspnet-core.md) — 啟動流程、請求管線、路由、繫結、驗證、DI、分層、設定來源
 - [JWT 登入與授權](./docs/learning/auth.md) — token 結構、HS256、claim、認證與授權、MapInboundClaims、ClockSkew、密碼比對、簽發型別鏈
 - [.NET 套件：找、裝、自己寫](./docs/learning/dotnet-packages.md) — 需求分類、三層階梯（BCL／共享框架／獨立套件）、查法、自製界線 — 11-14
+- [統一錯誤處理](./docs/learning/error-handling.md) — 四個錯誤出口、收斂形狀、選項註冊順序坑、與 Node 版對照 — 11-15
 
 ## 本檔主題
 
@@ -38,6 +39,44 @@
 ### 認證與授權
 
 登入流程：`POST /auth/login` 用 `FixedTimeEquals` 比對管理員密碼，通過就簽一張 HS256 的 JWT（payload 只有 `role: admin`，15 分鐘有效）；之後的寫入請求帶 `Authorization: Bearer <token>`，由 `UseAuthentication` 驗簽、`UseAuthorization` 執行 `[Authorize(Roles = "admin")]`。`MapInboundClaims` 必須關掉，否則框架會把 `role` 改名，角色就比不到了；`ClockSkew` 設 0，與 Node 版的過期判斷一致。各概念的完整說明見主題檔 [JWT 登入與授權](./docs/learning/auth.md)。
+
+## 2026-11-15 — 錯誤格式與 Node 版對齊
+
+錯誤契約收斂為 `{"error":{"code","message"}}`：新增 `Models/ApiErrorResponse.cs`、`Constants/ApiErrors.cs`、`Middleware/ExceptionMiddleware.cs`，並為 `MapFallback` 補上 `"{*path}"`。完整說明見主題檔[統一錯誤處理](./docs/learning/error-handling.md)；程式側的變更理由見 [CHANGELOG.md](./CHANGELOG.md) 的 2026-11-15 段。
+
+- 問：為什麼 `Configure<ApiBehaviorOptions>` 寫在 `AddControllers()` 前面，400 就回不到統一形狀？
+
+  答：`builder.Services` 收集的是延後執行的設定動作（框架於 `Build()` 之後依註冊順序逐一疊加，後登記者覆寫先登記者）。`AddControllers()` 內部亦註冊一組框架預設值，故先前寫入的自訂值會被覆寫。此問題不易察覺：編譯與啟動皆正常，僅於實際送出不合法的 JSON 時方能察覺回應形狀有誤。本次經由實際請求發現，已將該設定移至 `AddControllers()` 之後，並加註解說明順序限制。選項物件（Options 物件：框架用以收納某區塊設定的具名容器，本例為管理 `[ApiController]` 預設行為的 `ApiBehaviorOptions`）之註冊順序限制，後續新增其他 `Configure<...>` 時同樣適用。
+
+- 問：`MapFallback("{*path}")` 的 `"{*path}"` 是什麼？不寫會怎樣？
+
+  答：`{*path}` 為 catch-all 路由參數（`*` 表示涵蓋整段剩餘路徑，含斜線）。預設之 `MapFallback` 會排除形如檔名的路徑（此類路徑屬靜態檔案中介層之處理範圍）；若未指定 `{*path}`，`/nope.json` 之類的請求不會進入 fallback，回應為空本文而非統一的 404。指定 `"{*path}"` 後，未匹配之路由一律收斂為同一份 `ROUTE_NOT_FOUND` JSON。本次經由 `/nope` 與 `/nope.json` 兩個實際請求確認此差異。
+
+- 問：`OnChallenge` 裡的 `HandleResponse()` 是做什麼的？不寫會怎樣？
+
+  答：未攜帶 token 或 token 無效時，JwtBearer 之預設行為為直接回應空本文 401（Challenge：認證失敗時框架發出之要求出示身分回應）。`context.HandleResponse()` 用以告知框架「回應由呼叫端自行處理，框架不再介入」，後續程式碼方可寫入統一形狀的 `ApiErrors.Unauthorized` JSON。`OnForbidden`（角色不符）亦同，本專案回應 `ApiErrors.Forbidden`。Node 版對照：`src/index.ts` 自行撰寫之 unauthorized 中介層，兩者用途相同。
+
+- 問：`ApiErrors` 的每個錯誤屬性為什麼寫成 `=> Build(...)`？用 `static readonly` 存一份共用的不行嗎？
+
+  答：`=>` 為運算式主體屬性（讀取該屬性時執行右側運算式並回傳結果，相當於唯讀屬性的簡寫）：每次讀取 `ApiErrors.InvalidAssetId`，`Build()` 就執行一次。
+
+  誠實地說，`Build()` 在本專案的必要性低：目前沒有任何程式碼會修改回傳的物件；若改寫為 `static readonly` 存放單一實例，執行結果相同。
+
+  仍保留 `Build()` 的理由有二。其一為防禦性：將來若新增修改 `Message` 的程式碼（例如附加除錯資訊），共用實例會使其他處理中之請求亦讀到修改後的值（ASP.NET Core 同時處理多個請求，並行：同一時間有多個請求在執行）；每次 new 則無此風險。其二為與 Node 版結構對應：Node 版以共用之 `errorDefinition` 查表、每次 `throw new AppError` 建新物件；C# 這邊沒有對應的例外類別，直接在讀取點建新物件，兩邊「定義集中一處、物件每次建新」的結構相同。
+
+  結論為：兩種寫法在本專案結果等價，本次取風險較低者；背後適用的規則是「可變物件不共用」，並非「必須每次 new」。
+
+- 問：修改 `ApiErrors.cs` 的錯誤訊息後，為什麼重啟服務沒有用，要執行 `dotnet build`（或 `dotnet run`）才生效？
+
+  答：C# 為編譯語言，實際執行的是編譯產物（`bin/` 目錄下之組件），而非 `.cs` 原始檔。修改原始檔僅變更輸入，須經編譯將變更寫入產物，執行中的程式方能採用。`dotnet build` 僅編譯不執行；`dotnet run` 先編譯再執行。Node 版無此步驟：修改 TypeScript 原始檔後重啟服務即生效，不經獨立編譯階段。本次實務意義：僅修改錯誤訊息等靜態內容而未重新編譯時，回應仍為舊內容，易被誤判為回傳邏輯有誤；除錯時先確認是否已重新編譯。
+
+- 問：換語言重寫後端時，資料規格（錯誤形狀）通常都會跟原本不一樣嗎？
+
+  答：分三層看。傳輸層（HTTP 方法、狀態碼、標頭、JSON 編碼）為網路標準，與語言無關，兩邊相同。成功回應的形狀由產品需求決定（資產須有 id、name、config），兩邊長一樣是因為同一份需求，並非框架規定。
+
+  真正不同的是錯誤信封：Express 無內建錯誤形狀（送什麼就是什麼）；ASP.NET Core 內建 ProblemDetails（微軟定義之錯誤格式，欄位為 type、title、status、detail、traceId；網路標準 RFC 9457 定義之通用錯誤信封），不覆寫則 400 自動長那樣。ProblemDetails 為統一此層之嘗試，但僅屬建議而非強制；舊專案在其普及前已定好自身形狀，改動等於改契約。
+
+  實務結論為對契約、不對巧合：契約由產品定義（前端依其解析，改動即損壞前端），框架預設形狀僅為起點，必要時覆寫。本次驗證方式亦據此制訂：同一請求兩邊回同一內容，而非檢查 C# 是否依微軟文件撰寫。
 
 ## 2026-11-14 — 登入、JWT 與寫入權限
 

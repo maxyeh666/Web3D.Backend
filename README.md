@@ -36,22 +36,23 @@ Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 
 
 ### Phase 1 — 環境與骨架
 
-- [ ] 建立分層資料夾（路由、服務、資料存取、錯誤）與專案基本設定
+- [x] 建立分層資料夾（Controllers、Services、Data、Models、Constants、Middleware）與專案基本設定
 - [x] 開發埠改為 `3000`，與前端 `VITE_API_BASE_URL` 一致
-- [ ] CORS、API 存取日誌、統一錯誤回應的全域設定
+- [ ] CORS、API 存取日誌
+- [x] 統一錯誤回應的全域設定（見 Phase 3，已完成）
 - [x] `GET /health`、`GET /health/db`
 
 ### Phase 2 — Database
 
 - [x] Npgsql 連線 PostgreSQL，建立 `assets` 資料表對應的實體
-- [ ] 套用 Node.js 版的 SQL migration（`000`–`004`），建立資料表與預設資料
+- [x] 資料表與預設資料已存在（由 Node.js 版套用 `000`–`004` 建立；C# 版不執行 migration，只讀寫資料）
 - [x] `updatedAt` 輸出格式與 Node.js 版一致（`AssetService.ToDetailDto` 以 `yyyy-MM-ddTHH:mm:ss.fff'Z'` 輸出）
 
 ### Phase 3 — 錯誤處理與驗證
 
-- [ ] 錯誤碼與 HTTP 狀態碼對照表（與 Node.js 版一致）
-- [ ] 例外與 404 的統一處理
-- [x] 請求資料驗證（資產 id、請求內容、登入密碼；錯誤本文形狀的統一待 Phase 3 的例外處理）
+- [x] 錯誤碼與 HTTP 狀態碼對照表（與 Node.js 版一致，見 `Constants/ApiErrors.cs`）
+- [x] 例外與 404 的統一處理（`ExceptionMiddleware` 掛最前、`MapFallback("{*path}")` 放最後，皆回契約形狀）
+- [x] 請求資料驗證（資產 id、請求內容、登入密碼；驗證失敗回 400 `INVALID_REQUEST_BODY`，錯誤本文已統一）
 
 ### Phase 4 — API
 
@@ -83,13 +84,13 @@ Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 
 錯誤回應統一為 `{ "error": { "code", "message" } }`，錯誤碼與狀態碼對照同 Node.js 版
 （400 `INVALID_ASSET_ID` / `INVALID_REQUEST_BODY`、401 `INVALID_CREDENTIALS` / `UNAUTHORIZED`、
 403 `FORBIDDEN`、404 `ASSET_NOT_FOUND` / `MODEL_NOT_FOUND` / `ROUTE_NOT_FOUND`、500 `INTERNAL_SERVER_ERROR`）。
-目前 `GET/PUT /assets/{id}` 的 400 回 `{ "error": "字串" }`、404 與未帶 token 的 401 回空本文，`/health/db` 失敗回 `{ "status": "error" }`——與上面的形狀尚未一致，待 Phase 3 統一。
+例外、未知路由、驗證失敗與 Controller 明確回錯都回同一形狀。`/health/db` 失敗回 `{ "status": "error" }`——維運端點，刻意不套錯誤格式（與 Node 版一致）。
 
 ## 認證
 
 - `POST /auth/login`：請求本文 `{ "password": "..." }`。密碼正確回 `{ "token": "..." }`；密碼錯誤回 401 `INVALID_CREDENTIALS`。
 - token 用 HS256 簽發，有效 15 分鐘，claims 只有 `role: admin`。
-- 需要 token 的端點：`PUT /assets/{id}`。用法：標頭 `Authorization: Bearer <token>`。token 過期或簽章不符回 401，未帶 token 亦 401（空本文）；角色不符回 403。
+- 需要 token 的端點：`PUT /assets/{id}`。用法：標頭 `Authorization: Bearer <token>`。未帶 token、token 過期或簽章不符皆回 401 `UNAUTHORIZED`；角色不符回 403 `FORBIDDEN`。
 
 ## Asset
 
@@ -110,26 +111,30 @@ Asset
 
 ```text
 Web3D.Backend/
+├── Constants/      ApiErrors.cs           錯誤碼常數（與 Node 版一致）
 ├── Controllers/    AssetController.cs     GET /assets、GET/PUT /assets/{id}（PUT 需管理者 token）
 │                   AuthController.cs      POST /auth/login（簽發 JWT）
 │                   HealthController.cs    GET /health、GET /health/db
 ├── Services/       AssetService.cs        資產查詢與更新
 │                   AuthService.cs         密碼比對與 token 簽發
 ├── Data/           AppDbContext.cs        資料庫對應與 DbSet
+├── Middleware/     ExceptionMiddleware.cs 未處理例外 → 500，掛管線最前
 ├── Models/         Asset.cs               Entity，對應 assets 資料表
 │                   AssetSummaryDto.cs     清單回應（id / name）
 │                   AssetDetailDto.cs      單筆回應（config / updatedAt / modelKey）
 │                   UpdateAssetDto.cs      PUT 請求本文（含 JsonObjectOnly 驗證屬性）
 │                   LoginDto.cs            登入請求本文（password）
+│                   ApiErrorResponse.cs    錯誤回應外層（{"error":{"code","message"}}）
 ├── Program.cs                         DI 註冊與 middleware 設定
 ├── appsettings.json                   非機密設定（連線字串留空，由 user-secrets 補）
 ├── Properties/launchSettings.json     本機啟動參數（埠 3000）
-| └── docs/learning/                     筆記：architecture（架構總覽）
-|                                         ＋csharp-basics（C# 與 TS 對照）
-|                                         ＋ef-core（查詢翻譯與型別對應）
-|                                         ＋aspnet-core（啟動、請求管線、DI、分層）
-|                                         ＋auth（JWT、claim、簽發型別鏈）
-|                                         ＋dotnet-packages（怎麼找、要不要裝套件）
+└── docs/learning/                     筆記：architecture（架構總覽）
+                                        ＋csharp-basics（C# 與 TS 對照）
+                                        ＋ef-core（查詢翻譯與型別對應）
+                                        ＋aspnet-core（啟動、請求管線、DI、分層）
+                                        ＋auth（JWT、claim、簽發型別鏈）
+                                        ＋dotnet-packages（怎麼找、要不要裝套件）
+                                        ＋error-handling（四個錯誤出口、與 Node 版對照）
 ```
 
 ## 共用且不可變動的部分

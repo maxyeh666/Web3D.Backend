@@ -28,7 +28,7 @@
 | 6 | 6 資料庫查詢 | 將查詢轉換為 SQL，讀回 Entity 或投影為 DTO | EF Core、DbSet、IQueryable、變更追蹤 | `AssetService`、`AppDbContext` | `pool.query('SELECT ...')` |
 | 7 | 7 回應封裝 | 將物件序列化為 JSON，附加狀態碼後回傳前端 | serialization、status code | `Ok()` / `NotFound()` | `res.json()` / `res.status(404)` |
 
-任一階段拋出未處理的例外，回應結果為 500；統一錯誤格式留待 Phase 3 實作。
+任一階段拋出未處理的例外，回應結果為 500（由最外層的 `ExceptionMiddleware` 收斂成契約形狀，見[統一錯誤處理](./error-handling.md)）。
 
 ## 為什麼要分層
 
@@ -70,7 +70,7 @@
 - **model validation**：模型驗證，跑驗證屬性
 - **ModelState**：以屬性名稱為 key 的錯誤清單
 - **ProblemDetails**：微軟定義的錯誤格式
-- **`[ApiController]`**：標記，啟動三個框架行為：驗證失敗直接回 400 不進方法、依參數型別推斷來源（本文／網址／查詢）、錯誤回應改用 ProblemDetails
+- **`[ApiController]`**：標記，啟動三個框架行為：驗證失敗直接回 400 不進方法、依參數型別推斷來源（本文／網址／查詢）、錯誤回應改用 ProblemDetails（第三點本專案已用 `InvalidModelStateResponseFactory` 換成契約形狀）
 - **`ControllerBase`**：純 API 控制器的基底類別，相對於含 Views 的 `Controller`
 - **`IActionResult`**：回應的介面，`Ok()`、`NotFound()`、`BadRequest()` 都是它的實作
 - **序列化（serialization）**：物件轉 JSON，本專案預設屬性名轉 camelCase

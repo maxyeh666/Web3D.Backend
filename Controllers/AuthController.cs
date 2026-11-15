@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Web3D.Backend.Models;
 using Web3D.Backend.Services;
+using Web3D.Backend.Constants;
 
 namespace Web3D.Backend.Controllers
 {
@@ -24,14 +25,7 @@ namespace Web3D.Backend.Controllers
 
             if (!isValid)
             {
-                return Unauthorized(new
-                {
-                    error = new
-                    {
-                        code = "INVALID_CREDENTIALS",
-                        message = "Invalid credentials"
-                    }
-                });
+                return Unauthorized(ApiErrors.InvalidCredentials);
             }
 
             var token = _authService.CreateToken();
@@ -42,4 +36,4 @@ namespace Web3D.Backend.Controllers
             });
         }
     }
-};
+}
