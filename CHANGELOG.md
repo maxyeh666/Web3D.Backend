@@ -2,6 +2,39 @@
 
 依日期記錄後端的變更與設計決策。
 
+## 2026-11-16 — 模型端點 GET /models/{modelKey} 與設定驗證拆分
+
+**背景**
+- Phase 4 缺 `GET /models/{modelKey}`：前端切到 remote 後載入模型需要後端提供 glb；Node 版已有 `src/routers/models.ts` 的 `MODEL_FIELDS` 白名單查表與 `res.sendFile`，C# 版缺。
+- 11-15 則刻意保留而不加入的 `MODEL_NOT_FOUND` 錯誤碼，此時才有使用端。
+- `UpdateAssetDto` 的驗證在 `model` 改為選填後，`JsonObjectOnly`（只檢查「是 JSON 物件」）表達不了逐層可選的語義；且缺欄位要能補預設值，驗證屬性只能讀不能寫。
+
+**變更**
+- 新增 `Controllers/ModelController.cs`：`GET /models/{modelKey}`，白名單字典（`materials-variants-shoe` → `MaterialsVariantsShoe.glb`，大小寫敏感）查表後以 `PhysicalFile` 回檔；回 `Content-Type: model/gltf-binary`、`Cache-Control: public, max-age=3600`，開啟 `enableRangeProcessing`。未登記的 key 與磁碟上無檔案都回 404 `MODEL_NOT_FOUND`（白名單命中後仍檢查檔案存在，部署漏檔不回 500）。
+- 新增 `ModelFiles/`：`MaterialsVariantsShoe.glb`（7,833,592 bytes）與 `ATTRIBUTION.md`（CC BY 4.0 標註，© 2021 Shopify，與 Node 版 `models/ATTRIBUTION.md` 同義）。
+- `Web3D.Backend.csproj`：`None Update="ModelFiles\**\*"` 加 `CopyToOutputDirectory` 與 `CopyToPublishDirectory`（皆 `PreserveNewest`）。
+- `Models/UpdateAssetDto.cs`：`JsonObjectOnly` 換成 `JsonObjectConfig`（逐層檢查 `camera`、`cube`、`model`，先確認屬性存在、再確認型別、再取值）；`model` 改為選填，缺欄位由 `ApplyDefault()` 補 `{"model":{"materialColorOverrides":{}}}`。
+- `Controllers/AssetController.cs`：`UpdateAsset` 開頭呼叫 `ApplyDefault()`；`id` 檢查改為 `TryParseAssetId(string?, out long)`——正規式修正為 `^[1-9]\d*$`（原 `^[1-9]\d\d*$` 誤寫成須兩位數以上，`GET /assets/1`、`GET /assets/2` 會回 400），並把兩段 `TryParse` 收斂成一次解析。
+- `Constants/ApiErrors.cs`：`MODEL_NOT_FOUND` 轉為實際使用，移除「暫未列入」的過期註解。
+
+**設計決策**
+- 白名單查表而非 `UseStaticFiles` 開放整個目錄：需求是「只有登記過的模型能取得，其他一律 404」，靜態檔中介層開放整個 `wwwroot/`、條件比目錄更嚴的都得另外擋；且白名單把 modelKey 與檔名解耦，換檔案不用改前端。
+- 模型檔放 `ModelFiles/` 而非 `wwwroot/`：同上，`wwwroot/` 放進去就直接可下載，白名單形同虛設。
+- 用 `ContentRootPath` 組路徑而非 `Directory.GetCurrentDirectory()`：三種啟動（`dotnet run`、直接執行 `bin/`、發佈後）只有前者在各種情況下都指向檔案實際位置。
+- `CopyToOutputDirectory` 與 `CopyToPublishDirectory` 兩條都寫：build 與 publish 是各自獨立的複製流程，只寫前者本機跑得起來、部署後 `/models/` 全部 404。語義是增量（來源較新才複製），不是每次全拷。
+- 驗證用自訂 `ValidationAttribute` 逐層檢查而非 `[Required]`：`camera`（position 三軸有限數字、fov 數字）、`cube.color`（非空白字串）、`model.materialColorOverrides`（key 非空白、值符合 `#rrggbb`）三組規則各不相同，宣告式屬性表達不了；且屬性回傳值沒有寫回通道，補值必須放在 Action。
+- `model` 缺欄位由 `ApplyDefault()` 補，但顯式 `model: null` 仍 400：缺欄位是「沿用」，顯式 null 是「清空模型關聯」，語義不同，與 Node 版契約一致。
+- 404 雙分支（未登記／檔案遺失）都用同一個碼：呼叫端只關心「拿不到」，不需要區分是沒登記還是部署漏檔；後者屬部署問題，可由 404 觀測，不另記 log。
+- `id` 先正規式、再 `TryParse`：正規式負責契約，與 Node 版 `^[1-9]\d*$` 一字相同；`TryParse` 只負責擋掉超過 `long` 範圍的長數字，此點 C# 版刻意比 Node 版嚴。兩段收斂成 `TryParseAssetId`，解析只做一次，呼叫端一處判斷即取值。
+
+**學習筆記**
+- 2 則，見 LEARNING.md 的 2026-11-16 段（`TryGetProperty` 缺 `!` 導致全部 PUT 400、`Cache-Control` 分號導致不快取）；主題寫入 `docs/learning/static-files.md` 與 `docs/learning/dotnet-project.md`，並補 `aspnet-core.md` §模型驗證、`csharp-basics.md` 集合段。
+
+**已知限制 / 後續**
+- 200 回應與標頭尚未以實際請求確認：僅建置確認檔案跟著走（`bin/Debug/net10.0/ModelFiles/` 有 glb），`dotnet run` 後的三條路徑驗證待補。
+- 白名單寫死在程式內：新增模型需改程式重啟；與 `assets.model_key` 對齊的資料庫查表待有需求再做。
+- 11-15 則「`GET /models/{modelKey}` 未實作、`MODEL_NOT_FOUND` 待補」已解決（歷史則不回改）。
+
 ## 2026-11-15 — 錯誤格式與 Node 版對齊
 
 **背景**

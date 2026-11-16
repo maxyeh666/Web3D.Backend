@@ -40,6 +40,8 @@ Controller 版的路由叫屬性路由（attribute routing）：類別上的 `[R
 
 驗證結果集中在 ModelState（以屬性名稱為 key 的錯誤清單）。`[ApiController]` 的行為是：ModelState 有錯就自動回 400、不進入 Action，回應本文預設為 ProblemDetails（微軟定義的錯誤格式，欄位為 title、status、errors）。因為驗證發生在 Action 之前，Action 沒被執行就不可能呼叫 Service 寫入資料庫，這是框架層的保證，不需要在 Action 內再檢查一次。
 
+驗證屬性只能讀、不能改請求內容：`IsValid` 回的是布林值，框架沒有「把驗證後的物件寫回去」的通道。所以「缺欄位補預設」這類寫入邏輯必須放在 Action 內（例如 `UpdateAssetDto.ApplyDefault` 在 `AssetController.UpdateAsset` 開頭呼叫），寫進屬性裡也沒用，回傳值丟不出去。順序因此固定：驗證在前、補值在後，補值後的物件不再被驗一次——補值只能補「驗證已放行」的形狀，不能拿來繞過驗證。
+
 本專案已覆寫 `ApiBehaviorOptions.InvalidModelStateResponseFactory`，驗證失敗改回契約形狀的 `INVALID_REQUEST_BODY`（不是預設的 ProblemDetails）。注意註冊順序：`Configure<ApiBehaviorOptions>` 必須寫在 `AddControllers()` 之後，否則將被框架內建的預設值覆寫——本次曾因此設定失效（詳見 LEARNING.md 2026-11-15 段第一則）。四個錯誤出口的完整說明見[統一錯誤處理](./error-handling.md)。
 
 ## 依賴注入與物件生命週期

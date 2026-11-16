@@ -11,6 +11,8 @@
 - [JWT 登入與授權](./docs/learning/auth.md) — token 結構、HS256、claim、認證與授權、MapInboundClaims、ClockSkew、密碼比對、簽發型別鏈
 - [.NET 套件：找、裝、自己寫](./docs/learning/dotnet-packages.md) — 需求分類、三層階梯（BCL／共享框架／獨立套件）、查法、自製界線 — 11-14
 - [統一錯誤處理](./docs/learning/error-handling.md) — 四個錯誤出口、收斂形狀、選項註冊順序坑、與 Node 版對照 — 11-15
+- [模型檔託管](./docs/learning/static-files.md) — 白名單路由、ContentRootPath、檔案複製與回應標頭 — 11-16
+- [.NET 專案設定：csproj 與建置](./docs/learning/dotnet-project.md) — package.json 對照、檔案分類、複製規則、增量建置 — 11-16
 
 ## 本檔主題
 
@@ -39,6 +41,18 @@
 ### 認證與授權
 
 登入流程：`POST /auth/login` 用 `FixedTimeEquals` 比對管理員密碼，通過就簽一張 HS256 的 JWT（payload 只有 `role: admin`，15 分鐘有效）；之後的寫入請求帶 `Authorization: Bearer <token>`，由 `UseAuthentication` 驗簽、`UseAuthorization` 執行 `[Authorize(Roles = "admin")]`。`MapInboundClaims` 必須關掉，否則框架會把 `role` 改名，角色就比不到了；`ClockSkew` 設 0，與 Node 版的過期判斷一致。各概念的完整說明見主題檔 [JWT 登入與授權](./docs/learning/auth.md)。
+
+## 2026-11-16 — 模型端點 GET /models/{modelKey} 與設定驗證拆分
+
+新增 `Controllers/ModelController.cs`（modelKey 白名單查表 → glb 回傳）、`ModelFiles/`（模型檔與授權標註）與 csproj 複製規則（見主題檔 [.NET 專案設定](./docs/learning/dotnet-project.md) §複製規則）；`Models/UpdateAssetDto.cs` 把驗證從 `JsonObjectOnly` 換成逐層檢查的 `JsonObjectConfig`，缺 `model` 由 `ApplyDefault()` 補預設。機制說明見新主題檔[模型檔託管](./docs/learning/static-files.md)；驗證順序的完整說明見主題檔 [ASP.NET Core](./docs/learning/aspnet-core.md) §模型驗證。以下兩則是當天實際踩到的坑。
+
+- 問：`IsValidCube` 裡 `TryGetProperty` 的 `!` 漏掉，為什麼所有 PUT 都回 400，而不是只有 cube 有錯的才回？
+
+  答：驗證屬性是全有全無（三支 `IsValid*` 以 `&&` 串接，任一為 false 整個本文判不合法），而少了 `!` 的那個條件「color 存在或不存在都回 false」——color 存在時左邊為 true，color 不存在時 `color` 是 `default(JsonElement)`（型別的預設值：`JsonElement` 是實值型別，預設狀態的種類標記 `ValueKind` 為 Undefined，即「還沒指向任何 JSON」）不等於 String 而右邊為 true。兩條路都通往 false，所以沒有任何本文能通過，症狀是「全部 PUT 400」，與欄位內容無關。本次經由逐條 `||` 短路（短路：`||` 左邊為 true 就不再看右邊，`&&` 左邊為 false 就不再看右邊）分析找到，修法為補上 `!`（先確認取得到屬性，再確認型別、再取值，取值方法如 `GetString()` 在型別不對時會拋例外，驗證失敗應回 400 而非讓例外變成 500）。
+
+- 問：`Cache-Control` 寫成 `public; max-age=3600`，為什麼瀏覽器完全不快取？
+
+  答：`Cache-Control` 是逗號分隔的指令清單，分號不是分隔符。`public; max-age=3600` 會被視為一個無法辨識的單一指令而整串忽略，等於沒有設快取。HTTP 標頭的分隔符要看規格：逗號列舉與分號參數意義不同（`Content-Type` 用分號接參數，例如 `text/html; charset=utf-8` 的分號後面是該文件的參數），不能跨標頭類推。本次經 review 發現，改為 `public, max-age=3600`；快取的完整機制見主題檔[模型檔託管](./docs/learning/static-files.md)。
 
 ## 2026-11-15 — 錯誤格式與 Node 版對齊
 

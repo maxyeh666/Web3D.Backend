@@ -2,8 +2,7 @@ using Web3D.Backend.Models;
 
 namespace Web3D.Backend.Constants
 {
-    // 錯誤碼與訊息的唯一來源。與 Node 版 src/errors/errorDefinition.ts 相同
-    // MODEL_NOT_FOUND 等 GET /models/{modelKey} 實作時再加。
+    // 錯誤碼與訊息的唯一來源，與 Node 版 src/errors/errorDefinition.ts 九碼一一對齊。
     public static class ApiErrors
     {
         public static ApiErrorResponse InvalidRequestBody => Build("INVALID_REQUEST_BODY", "Invalid JSON body");
@@ -13,6 +12,7 @@ namespace Web3D.Backend.Constants
         public static ApiErrorResponse Forbidden => Build("FORBIDDEN", "Forbidden");
         public static ApiErrorResponse AssetNotFound => Build("ASSET_NOT_FOUND", "Asset not found");
         public static ApiErrorResponse RouteNotFound => Build("ROUTE_NOT_FOUND", "Route not found");
+        public static ApiErrorResponse ModelNotFound => Build("MODEL_NOT_FOUND", "Model not found");
         public static ApiErrorResponse InternalServerError => Build("INTERNAL_SERVER_ERROR", "Internal server error");
 
         // 每次呼叫回一個新物件：呼叫端若改內容也不會污染其他請求。

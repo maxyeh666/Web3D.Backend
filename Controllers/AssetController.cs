@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Web3D.Backend.Services;
 using Web3D.Backend.Models;
 using Web3D.Backend.Constants;
+using System.Text.RegularExpressions;
 
 namespace Web3D.Backend.Controllers
 {
@@ -33,7 +34,7 @@ namespace Web3D.Backend.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetAssetDetail(string id)
         {
-            if (!long.TryParse(id, out var assetId) || assetId <= 0)
+            if (!TryParseAssetId(id, out var assetId))
             {
                 return BadRequest(ApiErrors.InvalidAssetId);
             }
@@ -50,16 +51,28 @@ namespace Web3D.Backend.Controllers
         [Authorize(Roles = "admin")]
         public async Task<IActionResult> UpdateAsset(string id, UpdateAssetDto updateAssetDto)
         {
-            if (!long.TryParse(id, out var assetId) || assetId <= 0)
+            if (!TryParseAssetId(id, out var assetId))
             {
                 return BadRequest(ApiErrors.InvalidAssetId);
             }
+            // 補上預設值
+            updateAssetDto.ApplyDefault();
+
             var asset = await _assetService.UpdateAssetAsync(assetId, updateAssetDto);
             if (asset is null)
             {
                 return NotFound(ApiErrors.AssetNotFound);
             }
             return Ok(asset);
+        }
+        // 契約：1-9 開頭、其餘為數字（與 Node 版 ^[1-9]\d*$ 一致）；
+        // 再以 TryParse 擋掉超過 BIGINT 範圍的長數字（這點 C# 版刻意比 Node 版嚴，避免送出必定失敗的查詢）。
+        private static bool TryParseAssetId(string? id, out long assetId)
+        {
+            assetId = 0;
+            return id is not null
+                && Regex.IsMatch(id, @"^[1-9]\d*$")
+                && long.TryParse(id, out assetId);
         }
     }
 }

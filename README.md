@@ -61,7 +61,7 @@ Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 
 - [x] `GET /assets/{id}`
 - [x] `PUT /assets/{id}`（需管理者 token）
 - [x] `POST /auth/login`
-- [ ] `GET /models/{modelKey}`
+- [x] `GET /models/{modelKey}`（白名單查表，回 glb）
 
 ### Phase 5 — 整合與上線
 
@@ -79,12 +79,17 @@ Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 
 | GET | `/assets/{id}` | 取得單一資產 |
 | PUT | `/assets/{id}` | 更新單一資產（需管理者 token） |
 | POST | `/auth/login` | 管理者登入，回傳 15 分鐘有效的 JWT |
-| GET | `/models/{modelKey}` | 取得模型檔（未登記的 key 回 404；尚未實作） |
+| GET | `/models/{modelKey}` | 取得模型檔（白名單查表；未登記的 key 回 404 `MODEL_NOT_FOUND`） |
 
 錯誤回應統一為 `{ "error": { "code", "message" } }`，錯誤碼與狀態碼對照同 Node.js 版
 （400 `INVALID_ASSET_ID` / `INVALID_REQUEST_BODY`、401 `INVALID_CREDENTIALS` / `UNAUTHORIZED`、
 403 `FORBIDDEN`、404 `ASSET_NOT_FOUND` / `MODEL_NOT_FOUND` / `ROUTE_NOT_FOUND`、500 `INTERNAL_SERVER_ERROR`）。
 例外、未知路由、驗證失敗與 Controller 明確回錯都回同一形狀。`/health/db` 失敗回 `{ "status": "error" }`——維運端點，刻意不套錯誤格式（與 Node 版一致）。
+
+## Model
+
+模型檔放後端根目錄的 `ModelFiles/`（`MaterialsVariantsShoe.glb` 與授權標註；部署時由建置設定複製到輸出目錄）。
+`GET /models/{modelKey}` 只認白名單內的 key，回 `Content-Type: model/gltf-binary`，可快取一小時並支援分段下載；未登記的 key 回 404 `MODEL_NOT_FOUND`。
 
 ## 認證
 
@@ -115,6 +120,7 @@ Web3D.Backend/
 ├── Controllers/    AssetController.cs     GET /assets、GET/PUT /assets/{id}（PUT 需管理者 token）
 │                   AuthController.cs      POST /auth/login（簽發 JWT）
 │                   HealthController.cs    GET /health、GET /health/db
+│                   ModelController.cs     GET /models/{modelKey}（白名單查表，回 glb）
 ├── Services/       AssetService.cs        資產查詢與更新
 │                   AuthService.cs         密碼比對與 token 簽發
 ├── Data/           AppDbContext.cs        資料庫對應與 DbSet
@@ -122,19 +128,22 @@ Web3D.Backend/
 ├── Models/         Asset.cs               Entity，對應 assets 資料表
 │                   AssetSummaryDto.cs     清單回應（id / name）
 │                   AssetDetailDto.cs      單筆回應（config / updatedAt / modelKey）
-│                   UpdateAssetDto.cs      PUT 請求本文（含 JsonObjectOnly 驗證屬性）
+│                   UpdateAssetDto.cs      PUT 請求本文（逐層驗證；缺 model 補預設）
 │                   LoginDto.cs            登入請求本文（password）
 │                   ApiErrorResponse.cs    錯誤回應外層（{"error":{"code","message"}}）
+├── ModelFiles/                       模型檔（MaterialsVariantsShoe.glb）與授權標註
 ├── Program.cs                         DI 註冊與 middleware 設定
 ├── appsettings.json                   非機密設定（連線字串留空，由 user-secrets 補）
 ├── Properties/launchSettings.json     本機啟動參數（埠 3000）
 └── docs/learning/                     筆記：architecture（架構總覽）
                                         ＋csharp-basics（C# 與 TS 對照）
                                         ＋ef-core（查詢翻譯與型別對應）
-                                        ＋aspnet-core（啟動、請求管線、DI、分層）
+                                        ＋aspnet-core（啟動、請求管線、驗證、DI、分層）
                                         ＋auth（JWT、claim、簽發型別鏈）
                                         ＋dotnet-packages（怎麼找、要不要裝套件）
                                         ＋error-handling（四個錯誤出口、與 Node 版對照）
+                                        ＋static-files（模型檔託管、回應標頭）
+                                        ＋dotnet-project（csproj 與建置）
 ```
 
 ## 共用且不可變動的部分

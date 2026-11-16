@@ -31,7 +31,7 @@
 | Node 版 | C# 版 | 說明 |
 | --- | --- | --- |
 | `src/errorHandler.ts` 的 `error` 包裝 | `Models/ApiErrorResponse.cs`（外層 `Error`） | 形狀 `{"error": {"code", "message"}}` |
-| `src/errors/errorDefinition.ts` | `Constants/ApiErrors.cs` | 8 碼一字對齊；`MODEL_NOT_FOUND` 待 `GET /models/{modelKey}` 實作 |
+| `src/errors/errorDefinition.ts` | `Constants/ApiErrors.cs` | 8 碼一字對齊；`MODEL_NOT_FOUND` 由 `GET /models/{modelKey}` 使用（2026-11-16） |
 | `errorHandler` 最後一站 | `Middleware/ExceptionMiddleware.cs` | 未處理例外 → 500 |
 | `routers/*.ts` 的請求驗證失敗分支 | `InvalidModelStateResponseFactory` | 400 一律 `INVALID_REQUEST_BODY` |
 | `Challenge` 空本文（Node 版自行撰寫之 unauthorized 中介層） | `OnChallenge` 加 `HandleResponse()` | 若未攔截，將收到框架預設之空本文 401；詳見 `LEARNING.md` 2026-11-15 段第三則 |
@@ -41,8 +41,9 @@
 啟動後送出 11 個實際請求（PowerShell 傳送 JSON 須先寫入檔案，再以 `curl --data @檔` 傳送；單引號內之 `\"` 會被原樣送出）：
 
 - `GET /health/db` 200（服務與資料庫皆正常運作）
-- `GET /assets/abc` 400 `INVALID_ASSET_ID`
-- `GET /assets/999999` 404 `ASSET_NOT_FOUND`
+- `GET /assets/abc` 400 `INVALID_ASSET_ID`（格式不合法）
+- `GET /assets/1` 200（最小合法 id：個位數必須能通過，11-16 曾因樣式誤寫成須兩位數而全部 400）
+- `GET /assets/999999` 404 `ASSET_NOT_FOUND`（格式合法、資料不存在）
 - `GET /nope` 與 `GET /nope.json` 皆為 404 `ROUTE_NOT_FOUND`（後者驗證 `{*path}`）
 - `DELETE /assets/1` 404 `ROUTE_NOT_FOUND`（該路由不存在）
 - 未攜帶 token 呼叫 PUT 回 401 `UNAUTHORIZED`；以錯誤密碼登入回 401 `INVALID_CREDENTIALS`

@@ -17,4 +17,12 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
   </ItemGroup>
 
+  <!-- ModelFiles 跟著輸出與發佈目錄走：程式用 ContentRootPath 組路徑，
+       直接執行 bin 內執行檔或部署後根目錄會變，少了這段 /models/{modelKey} 一律 404。 -->
+  <ItemGroup>
+    <None Update="ModelFiles\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
 </Project>
