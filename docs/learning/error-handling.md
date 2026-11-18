@@ -22,9 +22,9 @@
 
 `Program.cs` 尾端之 `MapFallback("{*path}")` 承接所有未被匹配之請求。`"{*path}"` 為 catch-all 路由參數（`*` 表示涵蓋整段剩餘路徑，含斜線），須顯式指定：預設之 `MapFallback` 會排除形如檔名的路徑（此類路徑屬靜態檔案中介層之處理範圍）；若未指定，`/nope.json` 之回應為空本文，而非統一的 404。指定 `"{*path}"` 後，未匹配之路由一律收斂為同一份 `ROUTE_NOT_FOUND` JSON。置於最後之原因：其為所有路由皆未匹配時方進入之站點；若置於前方，將攔截正常路由。詳見 `LEARNING.md` 2026-11-15 段第二則。
 
-## 不收斂的例外：/health/db
+## 已收斂：/health/db（曾列為例外，現已統一）
 
-`GET /health/db` 失敗回 `{ "status": "error" }`，刻意不套錯誤格式。此為維運端點（負載平衡器、冷啟動喚醒檢查），呼叫端為機器而非前端；Node 版形狀相同，兩邊一致即可。
+`GET /health/db` 連線失敗回 500，本文為契約形狀的 `ApiErrors.InternalServerError`，與其他出口一致。原「維運端點刻意不套格式」的寫法已被程式碼推翻；經查 Node 版走 `errorHandler` 同樣回統一格式，當初宣稱兩邊都是 `{ "status": "error" }` 是錯的。實作改為 `ExecuteSqlAsync("SELECT 1")` 真查詢（不用 `Database.CanConnectAsync`——它把失敗轉成 `false`、不拋例外，`ExceptionMiddleware` 的 log 不會觸發，失敗原因不進日誌）；失敗走例外，`ExceptionMiddleware` 記完整堆疊（本次實測為 `System.TimeoutException: Timeout during connection attempt`）並回同一形狀。
 
 ## 與 Node 版的對照
 
@@ -48,4 +48,5 @@
 - `DELETE /assets/1` 404 `ROUTE_NOT_FOUND`（該路由不存在）
 - 未攜帶 token 呼叫 PUT 回 401 `UNAUTHORIZED`；以錯誤密碼登入回 401 `INVALID_CREDENTIALS`
 - `POST /assets/1` 傳送 `{}`（不合法 JSON）回 400 `INVALID_REQUEST_BODY`（驗證 `InvalidModelStateResponseFactory` 已生效）
+- 連線字串指向不可達主機時，`GET /health/db` 回 500 `INTERNAL_SERVER_ERROR`、客戶端計時約 15.4 秒（連線逾時 `Timeout=15` 生效）；日誌同時出現 `System.TimeoutException: Timeout during connection attempt`（含 Npgsql 堆疊）與 `[API] GET /health/db 500 15408ms` 兩行（之前 `Timeout=5` 時量的 5.57 秒已失效）。正常連線回 200，`durationMs: 520`。
 - 上述回應皆為 `{"error": {"code", "message"}}` 同一形狀。

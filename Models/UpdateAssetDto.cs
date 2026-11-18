@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 namespace Web3D.Backend.Models
 {
     // PUT /assets/{id} 的請求本文。Config 用 JsonElement 承接（結構隨資產類型變動，不拆成欄位），
-    // 內容驗證由 JsonObjectConfig 負責；缺欄位補值在 Controller 呼叫 ApplyDefault。
+    // 內容驗證由 JsonObjectConfig 負責；缺欄位補值與多餘鍵過濾在 Controller 呼叫 NormalizeConfig。
     public class UpdateAssetDto
     {
         [Required]
@@ -15,23 +15,25 @@ namespace Web3D.Backend.Models
         [JsonObjectConfig]
         public JsonElement Config { get; set; }
 
-        // 缺 model 時補成 { materialColorOverrides: {} }。
-        // 驗證屬性只看得到、改不了請求內容，所以補值放在 action 內；
-        // 不補的話，舊資料第一次存檔就會寫入不完整的 config。
-        public void ApplyDefault()
+        // 整理 config：補上缺的 model，並只留下契約定義的三個鍵。
+        // Node 版在驗證器裡重建物件，多餘的鍵本來就不會被寫入；這裡做同一件事，
+        // 讓 DB 內容永遠等於契約（PUT 是整筆取代，不保留無法驗證的欄位）。
+        public void NormalizeConfig()
         {
-            // JsonElement 唯讀：要改內容得先轉成可變的 JsonNode（`AsObject()` 轉成物件節點才能增刪屬性），改完再序列化回來。
             var config = JsonNode.Parse(Config.GetRawText())!.AsObject();
-            // model 沒有時補上預設結構
+
             if (config["model"] is null)
             {
-                config["model"] = new JsonObject
-                {
-                    ["materialColorOverrides"] = new JsonObject()
-                };
+                config["model"] = new JsonObject { ["materialColorOverrides"] = new JsonObject() };
             }
 
-            Config = JsonSerializer.SerializeToElement(config);
+            // DeepClone：一個 JsonNode 只能有一個父節點，直接指派會拋例外。
+            Config = JsonSerializer.SerializeToElement(new JsonObject
+            {
+                ["camera"] = config["camera"]!.DeepClone(),
+                ["cube"] = config["cube"]!.DeepClone(),
+                ["model"] = config["model"]!.DeepClone()
+            });
         }
     }
     // Config 內容驗證。內建 DataAnnotations 只能驗單一值（必填、長度），巢狀 JSON 的形狀表達不出來，
@@ -110,7 +112,7 @@ namespace Web3D.Backend.Models
         // 驗證 model 物件
         private static bool IsValidModel(JsonElement config)
         {
-            // model 為選填：舊資料沒有這個欄位，缺就放行，由 ApplyDefault 補預設；
+            // model 為選填：舊資料沒有這個欄位，缺就放行，由 NormalizeConfig 補預設；
             // 出現時嚴格驗，明寫 null 視為不合法（與 Node 版 isAssetConfig 相同）
             if (!config.TryGetProperty("model", out var model))
             {

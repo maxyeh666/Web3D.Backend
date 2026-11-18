@@ -53,8 +53,11 @@ namespace Web3D.Backend.Services
             if (asset is null) return null;
 
             asset.Name = updateAssetDto.Name;
-            // 將 JsonElement 轉換為 string，並更新 Config 欄位
+            // 將 JsonElement 轉換為 string 寫入 Config：傳來的已是 NormalizeConfig 整理後的三鍵，
+            // 與 Node 版驗證器重建物件的寫入結果一致。
             asset.Config = updateAssetDto.Config.GetRawText();
+            // updated_at 取應用程式時鐘；Node 版用資料庫的 CURRENT_TIMESTAMP。
+            // 單一實例下差異可忽略（見 CHANGELOG 2026-11-11 則已知限制）。
             asset.UpdatedAt = DateTimeOffset.UtcNow;
             // SaveChangesAsync() 會將變更保存到資料庫，並回傳受影響的資料列數量
             await _dbContext.SaveChangesAsync();

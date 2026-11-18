@@ -30,3 +30,13 @@ LINQ 方法（`Where`、`OrderBy`、`Select`）只是組裝查詢描述、不執
 ## 欄位預設值：HasDefaultValueSql 與 ValueGeneratedOnAdd
 
 兩者都在描述「這個欄位的值由誰產生」。`HasDefaultValueSql("CURRENT_TIMESTAMP")` 告訴 EF Core 這一欄在資料庫有預設值，並把該屬性標記為「新增時由資料庫產生」；`ValueGeneratedOnAdd()` 是再明確宣告一次。新增時若程式沒有指定值，EF 就不送這個欄位、由資料庫補上，並在 INSERT 之後讀回。
+
+## 連線字串、逾時與連線池（Npgsql）
+
+三個設定分屬不同層：建立連線的逾時（`Timeout`）與池的行為（`MaxPoolSize`、`MinPoolSize`、`ConnectionIdleLifetime`）是連線字串的一部分，本專案用 `NpgsqlConnectionStringBuilder` 在程式裡覆寫——不要求各環境的連線字串自帶參數，本機與部署行為一致。SQL 執行逾時（`CommandTimeout`）是 EF 的選項，跟著 `DbContext` 走，對每個 `DbCommand`（送往資料庫的單一指令）生效。
+
+逾時分客戶端與伺服器端，不要混用：Npgsql 的 `Timeout` 是客戶端等連線建立的上限（本專案 15 秒，因為免費雲端資料庫閒置喚醒常超過 5 秒）；`CommandTimeout` 是客戶端等查詢回來的上限（本專案 5 秒）。伺服器端另有 `statement_timeout`（資料庫自己中斷查詢，本專案刻意不用——兩層都設容易互鬥，且 `/health/db` 的 `SELECT 1` 已直接行使 `CommandTimeout`）。
+
+池的回收節奏容易高估：`ConnectionIdleLifetime` 只在總連線數超過 `MinPoolSize`（本專案沒設，即預設 0）時才回收，且搭 `ConnectionPruningInterval`（清理間隔，預設 10 秒）分批關閉，實際約 30～40 秒才關掉——與 Node 版 `pg` 的 `idleTimeoutMillis: 30_000` 只是近似，不是相等。
+
+與 Node 版的對照：`connectionTimeoutMillis` 對 `Timeout`（同為 15 秒）、`max` 對 `MaxPoolSize`（同為 5）、`idleTimeoutMillis` 對 `ConnectionIdleLifetime`（同為 30，但回收節奏只是近似）。

@@ -87,7 +87,7 @@ JWT（JSON Web Token：前後端傳遞登入狀態的一種 token 格式）由�
 
 ## 健康檢查：`/health` 與 `/health/db`
 
-`/health` 只確認服務活著，不碰資料庫；`/health/db` 實際連一次資料庫並量耗時（`durationMs`）。分開的原因：服務活著不代表資料庫連得上，兩支分開才能定位。`durationMs` 用來分辨變慢是 DB 慢還是網路慢。失敗回 500（與 Node 版同狀態碼；回應本文形狀的統一待 Phase 3）。
+`/health` 只確認服務活著，不碰資料庫；`/health/db` 實際連一次資料庫並量耗時（`durationMs`）。分開的原因：服務活著不代表資料庫連得上，兩支分開才能定位。`durationMs` 用來分辨變慢是 DB 慢還是網路慢。失敗回 500，本文為契約形狀的 `INTERNAL_SERVER_ERROR`（與 Node 版的狀態碼與形狀一致，統一已完成）。
 
 ## 簽發 token 的型別鏈
 

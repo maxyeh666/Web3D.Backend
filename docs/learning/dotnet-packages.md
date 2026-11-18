@@ -24,6 +24,10 @@
 
 命名空間與套件名的對應：多數情況套件名等於命名空間前綴，但不是定律（例如 `Npgsql.EntityFrameworkCore.PostgreSQL` 提供的東西掛在 EF 的命名空間下）。不確定就查，不要猜。
 
+## 程式碼用到型別，就自己宣告（不靠間接相依）
+
+`Program.cs` 用到了 `NpgsqlConnectionStringBuilder`，csproj 就自己加 `Npgsql` 的 `PackageReference`，即使 provider 套件已經把它拉進來（間接相依只是 provider 的實作細節；它哪天換版本或換內建方式，程式編的還是舊簽名，之後出錯難以定位）。判斷準則：程式出現該套件的型別名稱就宣告；只出現在別的套件文件裡就不宣告。
+
 ## 五個實際查法
 
 1. `dotnet package search <功能英文關鍵字> --take 5`：實測 `csv` → `CsvHelper` 7.3 億下載（事實標準）；`cron` → `NCrontab` 2.2 億、`Cronos` 8,000 萬。破億幾乎就是大家都在用；只有幾萬就要看維護者與最後更新日。

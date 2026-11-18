@@ -55,8 +55,8 @@ namespace Web3D.Backend.Controllers
             {
                 return BadRequest(ApiErrors.InvalidAssetId);
             }
-            // 補上預設值
-            updateAssetDto.ApplyDefault();
+            // 整理 config：補缺的 model、只留契約三鍵（實作見 UpdateAssetDto.NormalizeConfig）。
+            updateAssetDto.NormalizeConfig();
 
             var asset = await _assetService.UpdateAssetAsync(assetId, updateAssetDto);
             if (asset is null)

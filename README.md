@@ -38,7 +38,8 @@ Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 
 
 - [x] 建立分層資料夾（Controllers、Services、Data、Models、Constants、Middleware）與專案基本設定
 - [x] 開發埠改為 `3000`，與前端 `VITE_API_BASE_URL` 一致
-- [ ] CORS、API 存取日誌
+- [x] CORS（`CORS_ORIGIN` 白名單；未設定不限來源；方法與標頭全開，與 Node 版對齊；掛在 `UseHttpsRedirection` 之前）
+- [x] API 存取日誌（`ApiRequestLoggingMiddleware`：`[API] 方法 路徑 狀態碼 耗時ms`，掛管線最外層）
 - [x] 統一錯誤回應的全域設定（見 Phase 3，已完成）
 - [x] `GET /health`、`GET /health/db`
 
@@ -71,20 +72,20 @@ Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 
 
 ## API
 
-| Method | Path | 說明 |
-| --- | --- | --- |
-| GET | `/health` | 服務狀態 |
-| GET | `/health/db` | 資料庫連線狀態（含 `durationMs`） |
-| GET | `/assets` | 取得全部資產（摘要，只含辨識欄位） |
-| GET | `/assets/{id}` | 取得單一資產 |
-| PUT | `/assets/{id}` | 更新單一資產（需管理者 token） |
-| POST | `/auth/login` | 管理者登入，回傳 15 分鐘有效的 JWT |
-| GET | `/models/{modelKey}` | 取得模型檔（白名單查表；未登記的 key 回 404 `MODEL_NOT_FOUND`） |
+| Method | Path | 說明 | 狀態碼 |
+| --- | --- | --- | --- |
+| GET | `/health` | 服務狀態 | 200 |
+| GET | `/health/db` | 資料庫連線狀態（含 `durationMs`） | 200（`{"status","database":{"connected"},"durationMs"}`），連線失敗 500 `INTERNAL_SERVER_ERROR` |
+| GET | `/assets` | 取得全部資產（摘要，只含辨識欄位） | 200 |
+| GET | `/assets/{id}` | 取得單一資產 | 200；id 格式不合法 400 `INVALID_ASSET_ID`、不存在 404 `ASSET_NOT_FOUND` |
+| PUT | `/assets/{id}` | 更新單一資產（需管理者 token） | 200；無 token／簽章不符／過期 401 `UNAUTHORIZED`、非 admin 角色 403 `FORBIDDEN`、內容不合法 400 `INVALID_REQUEST_BODY` |
+| POST | `/auth/login` | 管理者登入，回傳 15 分鐘有效的 JWT | 200；密碼錯誤 401 `INVALID_CREDENTIALS` |
+| GET | `/models/{modelKey}` | 取得模型檔（白名單查表；未登記的 key 回 404 `MODEL_NOT_FOUND`） | 200；未登記 404 `MODEL_NOT_FOUND` |
 
 錯誤回應統一為 `{ "error": { "code", "message" } }`，錯誤碼與狀態碼對照同 Node.js 版
 （400 `INVALID_ASSET_ID` / `INVALID_REQUEST_BODY`、401 `INVALID_CREDENTIALS` / `UNAUTHORIZED`、
 403 `FORBIDDEN`、404 `ASSET_NOT_FOUND` / `MODEL_NOT_FOUND` / `ROUTE_NOT_FOUND`、500 `INTERNAL_SERVER_ERROR`）。
-例外、未知路由、驗證失敗與 Controller 明確回錯都回同一形狀。`/health/db` 失敗回 `{ "status": "error" }`——維運端點，刻意不套錯誤格式（與 Node 版一致）。
+例外、未知路由、驗證失敗、Controller 明確回錯與 `/health/db` 連線失敗都回同一形狀（含 500 `INTERNAL_SERVER_ERROR`）。
 
 ## Model
 
@@ -163,7 +164,7 @@ C# 版與 Node.js 版是同一套系統的兩個實作，以下項目共用、�
 - **資料存取**：EF Core（Node 版用 `pg` 直接寫 SQL）。資料表結構仍由手寫 SQL migration 管理，
   不啟用 EF Migrations，避免兩套版本工具互相覆蓋。
 - **設定來源**：`dotnet user-secrets`，不讀取 `.env`；部署仍由平台環境變數提供。
-- **埠**：沿用 `3000`，與前端 `VITE_API_BASE_URL` 的預設值一致（與 Node.js 版同埠，兩版不可同時啟動；要對照驗證時先後啟動即可）。
+- **埠**：沿用 `3000`，與前端 `VITE_API_BASE_URL` 的預設值一致（與 Node.js 版同埠，兩版不可同時啟動；要對照驗證時先後啟動即可；部署平台以 `PORT` 環境變數覆寫）。
 - **認證**：驗請求的 token 用 `JwtBearer`，簽登入 token 用 `System.IdentityModel.Tokens.Jwt`（HS256、claim 名 `role` 與 Node 版一致）。
 
 ## Development
@@ -187,8 +188,12 @@ dotnet run                # http://localhost:3000
 連線字串只在 user-secrets（本機）或 `ConnectionStrings__DefaultConnection`（部署環境變數；
 ASP.NET Core 以雙底線表示巢狀 key）提供，名字與 Node.js 版的 `DATABASE_URL` 不同，
 這是實作差異、不是契約差異。
-其餘名稱維持與 Node.js 版相同：`ADMIN_PASSWORD`、`JWT_SECRET`、`CORS_ORIGIN`、`PORT`
-（`CORS_ORIGIN`、`PORT` 待對應功能實作；埠目前由 `Properties/launchSettings.json` 固定為 3000）。
+其餘名稱維持與 Node.js 版相同：`ADMIN_PASSWORD`、`JWT_SECRET`、`CORS_ORIGIN`、`PORT`。
+`CORS_ORIGIN` 沒設不限來源，有設則以逗號分隔白名單；`PORT` 沒設用框架預設值（本機為 3000）。
+啟動檢查：`JWT_SECRET`、`ADMIN_PASSWORD` 沒設就啟動失敗；`PORT` 值非法、
+`CORS_ORIGIN` 有設卻拆不出任何來源，也啟動失敗——以上皆在開始監聽前。
+連線設定（寫死在程式碼、不要求各環境連線字串自帶，本機與 Render 相同）：
+建立連線逾時 15 秒（Neon 喚醒用）、單一 SQL 5 秒、程序連線池上限 5、閒置 30 秒起回收。
 
 ## Non-goals
 

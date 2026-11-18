@@ -19,6 +19,7 @@
 - 專案骨架：`dotnet new webapi` 產生哪些檔案 — 11-11
 - JSON 讀取與時間輸出（`JsonDocument`、`DateTimeOffset` 與格式字串） — 11-13
 - 認證與授權（JWT、HS256、claim、MapInboundClaims） — 11-14
+- 啟動設定與 CORS（PORT 讀取、啟動期檢查、政策白名單制） — 11-18
 
 ## 本檔小主題
 
@@ -41,6 +42,45 @@
 ### 認證與授權
 
 登入流程：`POST /auth/login` 用 `FixedTimeEquals` 比對管理員密碼，通過就簽一張 HS256 的 JWT（payload 只有 `role: admin`，15 分鐘有效）；之後的寫入請求帶 `Authorization: Bearer <token>`，由 `UseAuthentication` 驗簽、`UseAuthorization` 執行 `[Authorize(Roles = "admin")]`。`MapInboundClaims` 必須關掉，否則框架會把 `role` 改名，角色就比不到了；`ClockSkew` 設 0，與 Node 版的過期判斷一致。各概念的完整說明見主題檔 [JWT 登入與授權](./docs/learning/auth.md)。
+
+## 2026-11-18 — 啟動設定（PORT／CORS_ORIGIN）與 API 存取日誌
+
+- 問：ASP.NET Core 的 CORS 政策只寫了來源（`WithOrigins`／`AllowAnyOrigin`），為什麼前端的請求會被 preflight 擋下，而 Node 版的 `cors({origin})` 卻不用多寫什麼？
+
+  答：ASP.NET Core 的政策是白名單制（預設什麼都不放行）：方法清單（`Methods`）與標頭清單（`Headers`）預設是空的，而回應的 `Access-Control-Allow-Methods`／`Allow-Headers` 正是從這兩個清單產生，空清單就不送這兩個標頭，瀏覽器判定 preflight 失敗。`AllowAnyMethod`／`AllowAnyHeader` 的做法只是把 `*` 塞進清單（`AllowAnyMethod` 屬性的成立條件就是「清單只有一個 `*`」）。Node 的 `cors` 套件預設方法全開、且未設定 `allowedHeaders` 時反射請求帶來的標頭，所以兩邊的等效設定長得不一樣。前端（`client.ts`）每次請求都帶 `Content-Type`（JSON 內容類型，非簡單標頭）、寫入再帶 `Authorization`，兩者都會觸發 preflight（瀏覽器在真正請求前先送 OPTIONS 試探）。本次以實際請求確認：補上兩行後 preflight 回 `Allow-Methods: PUT`、`Allow-Headers: content-type,authorization`——反射的是請求值，不是 `*`。
+
+- 問：`AddCors` 政策委派裡的 `throw`，是在服務啟動時就失敗，還是等第一次請求才失敗？
+
+  答：啟動時，三環證據：`CorsOptions.AddPolicy` 收到委派就立即執行並建出政策；`CorsService`（CORS 服務本體）的建構子讀取設定值；管線的 `Build` 在 `Server.StartAsync`（開始監聽）之前。條件反轉的 throw（`origins.Length > 0` 誤寫，正常設定也會拋）因此在 `Now listening on` 印出前就失敗。本次另一個證據：`--no-launch-profile` 讓環境變成 Production、缺連線字串，同樣在啟動期拋出（`Program.cs:126`）而非等請求。驗證留在政策委派內只是整理，提前搬出只是換錯誤訊息。
+
+- 問：`UseHttpsRedirection` 找不到 https 埠時，是每個請求都印一次警告嗎？
+
+  答：不是，只印一次。埠號存在 `Lazy<int>`（延遲求值：第一次用到時才計算、之後記住結果）裡，`TryGetHttpsPort` 只求值一次。本次實測（只綁 http）也只看到一行 `Failed to determine the https port for redirect`。目前 http-only 綁定下這行中介層每次都直接放行，不影響任何請求；`UseCors` 排在它之前屬於防禦性排序，之後加上 https 綁定才有意義。
+
+- 問：只搜 Npgsql provider 套件檔找不到 `CommandTimeout`，能斷定這個 API 不存在嗎？
+
+  答：不能。`npgsql => npgsql.CommandTimeout(5)` 來自 EF Core 關聯式基底類別 `RelationalDbContextOptionsBuilder`，`NpgsqlDbContextOptionsBuilder` 只是繼承它；子套件的文件與 DLL 自然不會收錄父類別成員，「查不到」被誤判成「不存在」。準則是編譯器：`dotnet build -t:Rebuild`（全量重建，排除增量跳過）0 警告 0 錯誤即存在。本次教訓：宣告位置要從型別繼承鏈找，不要只搜用到的套件。
+
+- 問：`updated_at` 用應用程式時鐘、PUT 先查再存，為何不與 Node 版（DB 時鐘、單句 UPDATE）統一？
+
+  答：要拿 DB 時鐘只有兩條路：手寫 raw SQL（在 EF 實體更新流程裡開洞）或 DB trigger（schema 變更，要 migration）。觀測條件只有「應用程式與 DB 時鐘不同步」時才成立（兩邊都對時，偏差毫秒級）。先查再存的競態（中間被刪會 500 而非 404）只在併發刪除成立，單管理員寫入不會發生。兩者代價都大於收益，維持現狀、記 CHANGELOG 已知限制即可。
+
+- 問：PUT 的多餘鍵為何從保留改為丟掉？
+
+  答：PUT 是整筆取代，不是部分更新，DB 內容應該等於契約。Node 版驗證器重建 `{camera, cube, model}`，多餘鍵本來就不寫入；C# 版若保留，等於存進無法驗證的欄位。用 `NormalizeConfig` 在補 `model` 之外只留契約三鍵（`DeepClone` 避開同一節點不能有兩個父節點的限制），與 Node 寫入結果一致。
+
+- 問：`ExecuteSqlRawAsync` 明明存在，為什麼會報 `CS1061: 'DatabaseFacade' does not contain a definition`？
+
+  答：它是擴充方法（extension method：掛在別的型別上的靜態方法，寫起來像成員），本體在 `Microsoft.EntityFrameworkCore` 命名空間的 `RelationalDatabaseFacadeExtensions`；沒有 `using Microsoft.EntityFrameworkCore;` 就找不到。而之前用的 `CanConnectAsync` 是 `DatabaseFacade` 的實例方法，本來就不必那行 using——同一檔案先前編得過，反而讓人誤以為「已經有 EF 的 using 了」。斷定流程：先用套件的 XML 文件（`Microsoft.EntityFrameworkCore.Relational.xml` 有 `ExecuteSqlRawAsync` 簽名）確認存在，再用錯誤碼定位（`CS1061` 是缺 using 或缺組件）；`dotnet list package --include-transitive` 確認 `Relational` 在圖裡，排除組件問題，只剩缺 using。本次教訓與同日 `CommandTimeout` 同類：查不到 ≠ 不存在——擴充方法不在型別本身，IntelliSense 沒提示很容易誤判。
+
+- 問：連線字串裡寫 `Maximum Pool Size`，程式碼裡卻是 `MaxPoolSize`，到底哪個名字才對？
+
+  答：兩個都對，只是用在不同地方。`Maximum Pool Size` 是連線字串裡的文字關鍵字；`NpgsqlConnectionStringBuilder`（程式裡用來組連線字串的類別）上的屬性（property：類別對外暴露的可讀寫欄位）叫 `MaxPoolSize`。寫成 `MaximumPoolSize` 會在編譯期報 `CS0117`（型別裡沒有這個成員）——錯誤碼直接告訴你是名字錯了，不是功能不存在。查證位置是 NuGet 快取裡的 `Npgsql.xml` 文件。與同日另外兩次教訓同類：名稱要核對實際用法，不要憑字面拼。
+
+- 問：Node 版的連線逾時到底是幾秒？
+
+  答：15 秒。`web3D_proto_backend/src/db.ts` 寫的是 `connectionTimeoutMillis: 15_000`（毫秒；底線只是千分位分隔，方便讀數）。本次一度憑記憶寫成「與 Node 對齊（連線 5 秒）」，直到讀原始碼才發現是事實錯誤。教訓：要對齊參數，先打開對照組的原始碼確認，不要憑記憶或舊文件。代價見 CHANGELOG 設計決策：資料庫完全不可達時，約 15 秒才回 500。
+
 
 ## 2026-11-16 — 模型端點 GET /models/{modelKey} 與設定驗證拆分
 

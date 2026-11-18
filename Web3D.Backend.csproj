@@ -12,6 +12,8 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.14" />
+    <!-- Npgsql：程式碼直接用到 NpgsqlConnectionStringBuilder 型別，故自行宣告，不靠 provider 帶進來的傳遞依賴。 -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- Tokens.Jwt：簽發 token 用的 JwtSecurityToken（簽在這包，驗在 JwtBearer 那包）。 -->
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />

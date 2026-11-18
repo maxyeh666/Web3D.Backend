@@ -2,6 +2,53 @@
 
 依日期記錄後端的變更與設計決策。
 
+## 2026-11-18 — 啟動設定（PORT／CORS_ORIGIN）、API 存取日誌與 `/health` 連線韌性
+
+**背景**
+- `ADMIN_PASSWORD` 空值在第一次登入才回 500（Phase 4 遺留）；`PORT` 與 `CORS_ORIGIN` 兩項環境變數在 C# 版沒有對應實作（README 標註待實作），Node 版（`src/index.ts`、`src/env.ts`）兩者皆有。
+- Phase 1 的「CORS、API 存取日誌」未勾選；前端一旦以 `VITE_API_BASE_URL` 指向 C# 版，所有請求都會先送 preflight。
+
+**變更**
+- `Program.cs`：新增 `PORT` 讀取（格式錯誤或超出 1–65535 即啟動失敗）並以 `builder.WebHost.UseUrls` 綁 `http://0.0.0.0:{port}`；`ADMIN_PASSWORD` 未設定即啟動失敗（原為第一次登入 500）；新增 `AddCors` 的 `Frontend` 政策（`CORS_ORIGIN` 逗號分隔白名單、未設定不限來源、有設卻拆不出來源即啟動失敗，方法與標頭全開），`UseCors` 掛在 `UseHttpsRedirection` 之前；新增 `ApiRequestLoggingMiddleware` 並掛管線最外層。
+- 新增 `Middleware/ApiRequestLoggingMiddleware.cs`：每個請求印一行 `[API] 方法 路徑 狀態碼 耗時ms`（`Stopwatch` 計時、`finally` 收尾、結構化參數）。
+- `README.md`：Phase 1 的 CORS 與 API 存取日誌打勾；「C# 版與 Node.js 版的差異」補 `PORT` 覆寫說明；Development 段的環境變數說明更新為已實作狀態。
+- 驗證：`PORT=3000` 啟動印出 `Now listening on: http://0.0.0.0:3000`；白名單來源 preflight 回 `204` 並帶 `Allow-Methods: PUT`、`Allow-Headers: content-type,authorization`；惡意來源同回 `204` 但無 CORS 標頭；`GET /health` 回 `200` 且日誌記 `[API] GET /health 200 ...ms`。測試程序已停，`3000` 埠無殘留——以上皆為改池設定與 `/health/db` 實作之前的量測，見下方新驗證。
+- `Controllers/HealthController.cs`：`/health/db` 的實作改為 `ExecuteSqlAsync("SELECT 1")` 真查詢（原 `Database.CanConnectAsync`），並移除不再使用的 `ApiErrors` 引用；失敗讓例外往外拋，由 `ExceptionMiddleware` 記錄並回契約形狀的 `ApiErrors.InternalServerError`（退役 `CanConnectAsync` 的理由見下）。驗證：正常連線回 `200`，`durationMs: 520`（客戶端計時 541 毫秒）；假連線字串回 `500` 統一本文（`{"error":{"code":"INTERNAL_SERVER_ERROR","message":"Internal server error"}}`），客戶端計時 15426 毫秒（連線逾時 `Timeout=15` 生效），日誌同時印出 `System.TimeoutException: Timeout during connection attempt`（含 Npgsql 堆疊）與 `[API] GET /health/db 500 15408ms` 兩行；`GET /assets` 回 2 筆、20 個併發 `/health/db` 全部 200（耗時 191 毫秒）；三次皆 `dotnet build` 0 警告 0 錯誤。測試程序已停，`3001`／`3002`／`3003` 埠無殘留。
+- `Program.cs`：連線逾時 `Timeout=15`（原誤植為 5，見下方設計決策更正）、連線池 `MaxPoolSize=5` 與 `ConnectionIdleLifetime=30`（皆覆寫 `NpgsqlConnectionStringBuilder` 的同名鍵）；`MaxPoolSize` 是 builder 的屬性名（連線字串關鍵字卻是 `Maximum Pool Size`，以 NuGet 快取的 `Npgsql.xml` 為準），打錯會在編譯期 `CS0117` 失敗。查詢逾時 `CommandTimeout(5)`（繼承自 EF Core `RelationalDbContextOptionsBuilder`，套用到每個 `DbCommand`，以全量重建 0 警告 0 錯誤確認存在）；`Npgsql 10.0.3` 改為直接引用（程式碼用到該型別，不靠 provider 的傳遞依賴）。
+- `Models/UpdateAssetDto.cs`：`ApplyDefault` 改名並擴充為 `NormalizeConfig`（補缺的 `model`、只留契約三鍵，與 Node 版驗證器重建物件一致）；呼叫端 `AssetController.UpdateAsset` 同步改名。此為本日改動（前段完成實作，本段僅複核程式、補註解與同步文件）；端到端驗證仍待補，見已知限制。
+- `docs/learning/` 同步更新：`aspnet-core.md`（`NormalizeConfig` 須在 Action 內呼叫，見該檔模型驗證段）、`auth.md`（`/health/db` 改走統一錯誤格式，註明兩版差異已收斂）、`error-handling.md`（`ExecuteSqlAsync` 退役 `CanConnectAsync` 的理由與 15.4 秒實測）。
+
+
+**設計決策**
+- 來源白名單、方法與標頭全開（`AllowAnyMethod`／`AllowAnyHeader`），而不逐一列舉：前端每次請求都帶 `Content-Type`、寫入再帶 `Authorization`，兩者都會觸發 preflight，列舉制日後加一個標頭就會再擋一次；來源已由白名單控管，全開方法與標頭邊際風險低。與 Node 版 `cors({origin})` 的預設（方法全開、反射請求標頭）對齊。
+- 驗證留在 `AddCors` 的政策委派內而不提前：`CorsOptions.AddPolicy` 收到委派即執行、`CorsService` 建構子即讀 `Options.Value`，而管線 `Build` 在 `Server.StartAsync` 之前——條件反轉的 throw（原 `origins.Length > 0`，現 `== 0`）本來就會在開始監聽前失敗，提前只是換錯誤訊息，不是正確性修正。
+- `UseCors` 在 `UseHttpsRedirection` 之前：preflight（OPTIONS）若先被 307 轉去 https，瀏覽器直接判定 CORS 失敗。現況只綁 http、即使順序反了也不會重導，但部署加上 https 綁定後會出事，屬於防禦性排序。
+- 日誌掛最外層而非 `ExceptionMiddleware` 之內：例外被內層轉成 500 之後才回到外層，`finally` 讀到的才是實際回給前端的狀態碼。
+- `PORT` 無預設值（Node 版預設 3000）：沿用框架的預設監聽（本機 `launchSettings.json` 給 3000），只在有設定時覆寫；讀不到就不動，避免程式與啟動設定檔打架。
+- `UseHttpsRedirection` 保留：http-only 綁定下它只做一次判斷就放行（`Lazy<int>`，警告只印一次），不影響任何請求；之後加上 https 綁定才會真正重導。
+- `updated_at` 維持應用程式時鐘（見 11-11 則已知限制）：要拿 DB 時鐘只能 raw SQL 或 DB trigger；前者在 ORM 流程裡開洞，後者是 schema 變更。單一實例下時鐘偏差毫秒級，不值得。
+- 逾時值寫死在程式碼而不要求各環境連線字串自帶參數：本機與 Render 行為一致。連線逾時沒有對應的 EF 選項，只能走連線字串；查詢逾時走 EF 的 `CommandTimeout`——兩處缺一不可，註解已說明分工。
+- 連線逾時更正為 15 秒：本次收尾才發現 Node 版 `db.ts` 的 `connectionTimeoutMillis` 是 `15_000` 而非 5 秒，此前文件寫的「與 Node 對齊（連線 5 秒）」是事實錯誤。Node 刻意放寬是為了 Neon 免費方案（閒置會暫停，首次喚醒常超過 5 秒）；若 C# 只給 5 秒，`/health/db` 會把「DB 醒得慢」判成「服務不健康」。兩者計時器不完全相同（Node 是取池排隊上限、Npgsql 是建立連線），但數值對齊已足夠覆蓋喚醒情境。代價：DB 完全不可達時約 15 秒才回 500（已實測 15426 毫秒）。`Program.cs` 註解同步改寫。
+- 連線池 `MaxPoolSize=5`、`ConnectionIdleLifetime=30`：與 Node 版的 `max: 5`、`idleTimeoutMillis: 30_000` 對齊，與連線逾時一併寫進 `NpgsqlConnectionStringBuilder`（會覆寫連線字串的同名設定）。兩版接同一顆資料庫，連線數要一起算（不能超過 `max_connections`）。Npgsql 的閒置回收只在總連線數超過 `MinPoolSize`（預設 0）時觸發、且搭 `ConnectionPruningInterval`（預設 10 秒）清理，實際 30～40 秒才關掉——與 Node 的精確 30 秒只是近似，文件不可寫成「完全一致」。
+- `/health/db` 改 `ExecuteSqlAsync("SELECT 1")` 而非 `Database.CanConnectAsync`：`CanConnectAsync` 把失敗轉成 `false`、不拋例外，`ExceptionMiddleware` 的 `LogError` 不會觸發——失敗原因不進日誌，只有存取日誌的一行 500（Node 版同樣失敗會由 `errorHandler` 印完整錯誤）。`ExecuteSqlAsync` 的參數是 `FormattableString`，`$"SELECT 1"` 可隱式轉換；回傳值（影響列數）忽略即可。`ExecuteSqlRawAsync` 同等可用，兩者皆為 `Microsoft.EntityFrameworkCore` 命名空間的擴充方法（沒有這行 using 就是 CS1061；`CanConnectAsync` 是 `DatabaseFacade` 的實例方法才免 using）。改完之後失敗走 `ExceptionMiddleware`——已驗證日誌確實出現 `System.TimeoutException` 含完整堆疊。
+- 只用 `CommandTimeout`、不另加 `statement_timeout`：Node 的 `statement_timeout` 是伺服器端（資料庫自己中斷查詢），`CommandTimeout` 是客戶端（Npgsql 放棄等待並送取消）。兩層都設容易互鬥；且／`health/db` 的 `SELECT 1` 已直接行使 `CommandTimeout`，增加伺服器端逾時是多出的複雜度，不值得。語意差異記入 `Program.cs` 註解。
+- `/health/db` 併入統一錯誤格式：先前「維運端點刻意不套格式」建立在錯誤前提上（Node 版走 `errorHandler` 同樣統一）；多一種形狀只會讓前端多一份解析分支，統一後四個出口同一形狀。
+
+**學習筆記**
+- 9 則，見 LEARNING.md 的 2026-11-18 段（CORS 白名單制陷阱、啟動期檢查的三環證據、`Lazy` 警告頻率、`CommandTimeout` 宣告位置、時鐘與寫入方式不統一的理由、多餘鍵丟掉的理由、CS1061 實例方法與擴充方法的區別、`MaxPoolSize` 屬性與 `Maximum Pool Size` 關鍵字的名稱陷阱、讀對照組原始碼再落文件的教訓）。
+
+**已知限制 / 後續**
+- 嚴格版替代方案（`WithMethods`／`WithHeaders` 明列）未採用，見設計決策；日後若要收緊，先確認前端送出的標頭清單。
+- 政策名稱 `"Frontend"` 字串在 `AddPolicy` 與 `UseCors` 各出現一次，打錯會在第一次請求時才拋；常數化留待下次動該段時處理。
+- 200 回應與標頭已以實際請求確認（見變更段）；`PUT /assets/{id}` 的端到端寫入（帶 token、寫 DB，涵蓋 `NormalizeConfig` 的補 `model`、三鍵過濾、`updatedAt` 推進）尚未以 C# 版執行，留待 Phase 5 前端指向本服務時驗。
+- `id` 超過 BIGINT 範圍：C# 版先擋回 400（刻意較嚴，註解已說明），Node 版會送進 DB 變 500；統一方向是修 Node（加 BIGINT 上限檢查），記為 backlog。
+- PUT 為先 SELECT 再 UPDATE（兩次往返）：中間若該列被刪除會回 500 而非 404；單管理員寫入情境不會發生，不改。
+- 數字格式極細微差異：`75.0` Node 回 `75`、C# 回 `75.0`；前端 `JSON.parse` 後等值，不處理。
+- 池上限未精確驗證：20 併發 `/health/db` 全部 200 只證明「不報錯」，沒證明上限真是 5；併發 5 個請求本來就會排隊，`Test plan` 無法從回應時間反推出池大小。要精確需壓到 `max_connections` 或觀察 `pg_stat_activity`，成本不划算，記為已知限制，部署後若連線數異常再驗。
+- `ConnectionIdleLifetime=30` 實際約 30～40 秒回收：以清理間隔（預設 10 秒）為拍子，與 Node 的精確 30 秒只是近似。
+- 本則早期的兩個數字已不代表現況：變更段的 `GET /health 200` 與 preflight 量測、`Timeout=5` 時量的 5.57 秒，均寫於改池設定與 `/health/db` 實作之前。現況數字見變更段 `/health/db` 那條（假連線字串客戶端計時 15426 毫秒）。
+- `/health/db` 成功形狀刻意維持 `database: { connected: true }`（Node 版同樣寫死 true，僅在成功時出現）：失敗改走例外、不走 `connected: false`，與 Node 的 `pool.query('SELECT 1')` 失敗直接 500 同構。
+
 ## 2026-11-16 — 模型端點 GET /models/{modelKey} 與設定驗證拆分
 
 **背景**
