@@ -113,3 +113,8 @@
 - 實作細節需查閱機制時 → [aspnet-core.md](./aspnet-core.md)
 - 需修改資料庫（查詢、新增欄位、變更型別）時 → [ef-core.md](./ef-core.md)
 - 需查閱實作背景時 → [LEARNING.md](../../LEARNING.md) 的按天日誌
+## 程式碼註解與文件的界線
+
+程式碼註解只保留兩類：綁定這段程式碼的事實（政策名稱、順序限制），以及決策理由（為什麼這樣寫）。方法上方保留一行摘要（Controller action 寫 `METHOD 路徑：做什麼＋狀態碼`）。超過一行即屬機制說明，統一放本目錄主題檔，避免同一段文字在程式碼與文件兩處同步。
+
+因此某段程式碼沒有註解，代表說明在對應主題檔：管線與框架行為 → [aspnet-core.md](./aspnet-core.md)；Entity 對應與查詢翻譯 → [ef-core.md](./ef-core.md)；JSON 型別、C# 語法、型別選擇、介面 → [csharp-basics.md](./csharp-basics.md)；JWT → [auth.md](./auth.md)；四個錯誤出口 → [error-handling.md](./error-handling.md)；端點與錯誤碼契約 → README。

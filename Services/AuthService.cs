@@ -9,7 +9,6 @@ namespace Web3D.Backend.Services
     // 只做兩件事：驗管理員密碼、簽發登入用的 token。無狀態，不記任何請求資料。
     public class AuthService
     {
-        // IConfiguration 是 ASP.NET Core 提供的介面，用來讀取 appsettings.json 或其他設定來源的設定值。
         private readonly IConfiguration _configuration;
 
         public AuthService(IConfiguration configuration)
@@ -43,9 +42,8 @@ namespace Web3D.Backend.Services
                 throw new InvalidOperationException("JWT_SECRET is not configured.");
             }
 
-            // 把密鑰字串包成金鑰物件：簽章 API 吃的是金鑰物件不是字串，所以先轉 UTF-8 位元組再包裝。
+            // 金鑰物件包裝字串（簽章 API 吃的是金鑰物件，不是字串；HS256 見 Program.cs，與 Node 版同演算法）。
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
-            // HS256：與 Node 版同一種簽章演算法（SHA256 只是雜湊名稱，不能用在這裡）。
             // 把「金鑰＋演算法」綁成簽章設定：簽和驗都用同一份，兩邊才對得上。
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
             var now = DateTime.UtcNow;

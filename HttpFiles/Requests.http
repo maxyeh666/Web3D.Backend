@@ -1,0 +1,104 @@
+# 使用方式：先送「POST /auth/login」（本檔下方 `# @name login` 那一支），
+# @token 會從該登入請求的回應本文取值，之後再送 PUT /assets/{id}。
+# 兩版同埠（3000）：C# 版與 Node.js 版不可同時啟動；對兩版各驗一輪時請先後啟動、一版一版跑。
+
+@baseUrl = http://localhost:3000
+@contentType = application/json
+@token = {{login.response.body.token}}
+@adminPassword = {{貼上你的 ADMIN_PASSWORD}}
+
+##########################
+### Request: GET /assets
+##########################
+
+
+GET {{baseUrl}}/assets
+Content-Type: {{contentType}}
+
+
+###############################
+### Request: GET /assets/{id}
+###############################
+
+### Path Parameter: assetId
+@assetId = 2
+
+
+GET {{baseUrl}}/assets/{{assetId}}
+Content-Type: {{contentType}}
+
+
+###############################
+### Request: PUT /assets/{id}
+###############################
+
+### Path Parameter: putAssetId
+@putAssetId = 2
+
+
+PUT {{baseUrl}}/assets/{{putAssetId}}
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "name": "Materials Variants Shoe",
+  "config": {
+    "cube": {
+      "color": "#999999"
+    },
+    "model": {
+      "materialColorOverrides": {}
+    },
+    "camera": {
+      "fov": 60,
+      "position": [
+        3,
+        5,
+        5
+      ]
+    }
+  }
+}
+
+###############################
+### Request: POST /auth/login
+###############################
+# @name login
+
+POST {{baseUrl}}/auth/login
+Content-Type: {{contentType}}
+
+{ 
+  "password": "{{adminPassword}}"
+}
+
+##########################
+### Request: GET /health
+##########################
+
+
+GET {{baseUrl}}/health
+Content-Type: {{contentType}}
+
+
+#############################
+### Request: GET /health/db
+#############################
+
+
+GET {{baseUrl}}/health/db
+Content-Type: {{contentType}}
+
+
+#####################################
+### Request: GET /models/{modelKey}
+#####################################
+
+### Path Parameter: modelKey
+@modelKey = materials-variants-shoe
+
+
+GET {{baseUrl}}/models/{{modelKey}}
+Content-Type: {{contentType}}
+
+

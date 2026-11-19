@@ -87,7 +87,7 @@ JWT（JSON Web Token：前後端傳遞登入狀態的一種 token 格式）由�
 
 ## 健康檢查：`/health` 與 `/health/db`
 
-`/health` 只確認服務活著，不碰資料庫；`/health/db` 實際連一次資料庫並量耗時（`durationMs`）。分開的原因：服務活著不代表資料庫連得上，兩支分開才能定位。`durationMs` 用來分辨變慢是 DB 慢還是網路慢。失敗回 500，本文為契約形狀的 `INTERNAL_SERVER_ERROR`（與 Node 版的狀態碼與形狀一致，統一已完成）。
+`/health` 只確認服務活著，不碰資料庫（給平台探測與冷啟動喚醒用，最輕量）；`/health/db` 實際連一次資料庫並量耗時（`durationMs`）。分開的原因：服務活著不代表資料庫連得上，兩支分開才能定位。`durationMs` 用來分辨變慢是 DB 慢還是網路慢。失敗回 500，本文為契約形狀的 `INTERNAL_SERVER_ERROR`（與 Node 版的狀態碼與形狀一致，統一已完成）。
 
 ## 簽發 token 的型別鏈
 
@@ -121,7 +121,7 @@ JWT（JSON Web Token：前後端傳遞登入狀態的一種 token 格式）由�
 
 | 型別 | 所在的命名空間（來自哪個套件） | 做什麼 | 本專案為何用它 |
 |---|---|---|---|
-| `IConfiguration` | `Microsoft.Extensions.Configuration`（共享框架自帶，不用裝） | 讀取設定值的介面 | 讀 `JWT_SECRET`、`ADMIN_PASSWORD`、連線字串 |
+| `IConfiguration` | `Microsoft.Extensions.Configuration`（共享框架自帶，不用裝） | 讀取設定值的介面（概念見 [csharp-basics.md](./csharp-basics.md)「介面」節） | 讀 `JWT_SECRET`、`ADMIN_PASSWORD`、連線字串 |
 | `SymmetricSecurityKey` | `Microsoft.IdentityModel.Tokens`（`System.IdentityModel.Tokens.Jwt`） | 對稱式金鑰物件 | 包裝 `JWT_SECRET`，簽與驗共用 |
 | `SigningCredentials` | 同上 | 金鑰＋演算法的簽章設定 | 告訴簽章步驟用 HS256 |
 | `SecurityAlgorithms.HmacSha256` | 同上 | 簽章演算法常數（值 `HS256`） | 與 Node 版同一種演算法 |
@@ -129,7 +129,7 @@ JWT（JSON Web Token：前後端傳遞登入狀態的一種 token 格式）由�
 | `JwtRegisteredClaimNames` | `System.IdentityModel.Tokens.Jwt` | 標準 claim 名的常數表 | `Iat` 即 `iat` |
 | `ClaimValueTypes` | `System.Security.Claims`（BCL） | claim 值的型別常數表 | `Integer64` 宣告整數 |
 | `JwtSecurityToken` | `System.IdentityModel.Tokens.Jwt` | token 的物件描述 | 組出 claims＋效期＋簽章 |
-| `JwtSecurityTokenHandler` | 同上 | token 的序列化工具 | `WriteToken` 產出字串 |
+| `JwtSecurityTokenHandler` | 同上 | token 的序列化工具 | `WriteToken` 產出三段字串 |
 | `CryptographicOperations` | `System.Security.Cryptography`（BCL） | 密碼學工具 | `FixedTimeEquals` 防時序攻擊 |
 | `JwtBearerDefaults` | `Microsoft.AspNetCore.Authentication.JwtBearer`（要裝） | 認證 scheme 名稱常數 | `AuthenticationScheme` 即 `Bearer` |
 | `TokenValidationParameters` | `Microsoft.IdentityModel.Tokens` | 「怎麼驗 token」的設定物件 | 簽名／效期／演算法白名單／角色來源 |

@@ -4,9 +4,7 @@ namespace Web3D.Backend.Middleware
 {
     public class ExceptionMiddleware
     {
-        // 下一個管線/步驟
         private readonly RequestDelegate _next;
-        // 內建logger機制
         private readonly ILogger<ExceptionMiddleware> _logger;
 
         public ExceptionMiddleware(
@@ -17,10 +15,7 @@ namespace Web3D.Backend.Middleware
             _next = next;
             _logger = logger;
         }
-        // 攔截下游管線拋出的例外，統一回 500 JSON。
-        // context是傳進來的整個請求(Request+Response)
-        // try...catch 機制：正常情況把請求交給下一個 middleware（_next），拋例外才進 catch。
-        // catch到錯誤就寫入logger並進行錯誤處理
+        // 攔截下游未處理例外：記完整堆疊、回契約形狀的 500；回應已開始送出時重拋，不吞例外。
         public async Task InvokeAsync(HttpContext context)
         {
             try
@@ -31,6 +26,7 @@ namespace Web3D.Backend.Middleware
             {
                 _logger.LogError(exception, "An unhandled exception occurred.");
 
+                // 回應已開始送出就無法回頭改寫：重拋中止，讓伺服器關掉連線。
                 if (context.Response.HasStarted)
                 {
                     throw;

@@ -54,3 +54,58 @@
 要完全符合「只接受以 1-9 開頭的正整數字串」的規則，需自行逐字元檢查或先比對正規表達式。
 
 專案的 id 檢查是「先正規表達式、再 `TryParse`」兩段：正規表達式負責契約（1-9 開頭、其餘數字），`TryParse` 只負責擋掉超過 `long` 範圍的長數字，避免送出必定失敗的查詢。樣式寫成 `^[1-9]\d*$`；若誤寫成 `^[1-9]\d\d*$`，其中 `\d\d*` 等於 `\d+`（至少再一位數字），會把 `1`、`2` 這種個位數 id 判成不合法——正向的最小案例（合法輸入中最短的那個）必須一起測，只驗「不合法的被擋掉」看不出這種錯。
+## 型別選擇：同一件事挑哪個型別
+
+同一份資料在不同位置用不同型別存放，下表記「本專案用哪個、換另一個會怎樣」。
+
+| 場景 | 本專案用 | 替代選項 | 為什麼 |
+| --- | --- | --- | --- |
+| id 回給前端 | `string`（`Id.ToString()`） | `long` | BIGINT 超過 JS 安全整數（2 的 53 次方減 1），前端會失真；與 Node 版 pg 驅動輸出一致 |
+| config 存在 Entity | `string` | `JsonDocument`／`JsonElement`／強型別 class | 整包存整包取，內容隨資產類型變動，不拆欄位；`JsonDocument` 需釋放，不適合當長期屬性。以後要強型別再換型別，屆時只要改這個屬性 |
+| config 在 DTO | `JsonElement` | `string`／`JsonNode` | 序列化即成 JSON 物件（`string` 會被再轉義成字串）；只讀不改 |
+| 整理 config | `JsonNode` | `JsonElement` | 要加鍵、刪鍵、重建，`JsonElement` 唯讀；`DeepClone` 避開「一個節點只能有一個父節點」的限制 |
+| 查詢結果 | `List<T>`（`ToListAsync` 收成） | `IQueryable<T>`／`IEnumerable<T>` | `IQueryable<T>` 是查詢描述，還沒打資料庫；回傳它會讓呼叫端意外再查一次 |
+| action 回傳 | `IActionResult` | `ActionResult<T>` | 200／400／404 多出口時它最直觀；`ActionResult<T>` 能讓 OpenAPI 推出回應型別（目前列為已知限制） |
+| 時間 | `DateTimeOffset`（Entity 與輸出）、`DateTime`（簽 token 取現在） | 全用 `DateTime` | 前者帶時區位移，對應資料庫 timestamptz；JWT 的 `iat` 只需要「現在」這個瞬間，`DateTime.UtcNow` 即可 |
+| 逾時 | `TimeSpan.Zero`（`ClockSkew`） | 秒數 `int` | API 要求 `TimeSpan` 型別，`5` 不會被當成 5 秒 |
+| 查無資料 | 回 `null` | 全拋例外 | 可預期的業務結果回 `null`（Controller 轉 404）；環境問題（設定缺失、DB 失敗）才拋給 `ExceptionMiddleware` |
+
+## 介面（interface）與框架要求的型別
+
+介面只宣告成員簽章、不給實作；類別宣告實作它，就必須提供那些成員。框架用介面表示「規格」，實作可以換（DI 註冊的對象、測試替身），呼叫端只認介面。
+
+與 TypeScript 的 `interface` 不同的三點：TypeScript 是結構型別（形狀對就符合），C# 是名目型別（必須明確宣告實作）；TypeScript 的介面編譯後消失，C# 的介面是執行期存在的型別；C# 的介面常用在 DI 與框架擴充點，TypeScript 的介面主要做靜態檢查。
+
+### 本專案用到的介面與框架型別
+
+種類欄只為分辨寫法（介面／抽象類別／基底類別／委派），不是難度分級。範圍只收程式碼真的有出現的。
+
+| 成員 | 種類 | 誰提供 | 本專案在哪用 | 為什麼是它 |
+| --- | --- | --- | --- | --- |
+| `IConfiguration` | 介面 | 共享框架（`Microsoft.Extensions.Configuration`） | `AuthService` 建構子注入，讀 `JWT_SECRET`、`ADMIN_PASSWORD` | 讀哪個來源（appsettings／環境變數／user-secrets）由框架疊加，程式只讀最終結果；換來源不改程式。來源順序見 [aspnet-core.md](./aspnet-core.md) |
+| `ILogger<T>` | 泛型介面 | 共享框架 | 兩個 middleware | `T` 是分類標籤，輸出附類別名；換輸出目的地（主控台／檔案／雲端）只改啟動設定，不動程式 |
+| `IActionResult` | 介面 | ASP.NET Core | 四個 Controller 的 5 個 action | 同一個 action 可能回 200／400／404；`Ok()`、`NotFound()`、`BadRequest()`、`Unauthorized()` 都是它的實作 |
+| `IWebHostEnvironment` | 介面 | ASP.NET Core | `ModelController` 取 `ContentRootPath` 組模型檔路徑 | 啟動方式不同，根目錄不同；測試可換假實作。見 [static-files.md](./static-files.md) |
+| `IQueryable<T>` | 介面 | BCL（LINQ） | `AssetService` 的 LINQ 鏈（程式碼未明寫型別，鏈式呼叫推出） | 查詢描述、延遲執行，EF 才能翻譯成 SQL。見 [ef-core.md](./ef-core.md) |
+| `IDisposable` | 介面 | BCL | `using var jsonDoc = JsonDocument.Parse(...)` | `using` 區塊的依據；`JsonDocument` 持有租用來的緩衝區，離開時自動歸還 |
+| `ValidationAttribute` | 抽象類別 | DataAnnotations | `JsonObjectConfigAttribute` | 驗證屬性的固定基底，覆寫 `IsValid` 即可接入模型驗證管線 |
+| `ControllerBase` | 基底類別 | ASP.NET Core | 四個 Controller | 只給回應方法與 `Request`／`Response`，不含 Views |
+| `DbContext`／`DbContextOptions<T>` | 基底／泛型類別 | EF Core | `AppDbContext` | 前者是所有查詢的進入點，後者承接連線字串等啟動設定 |
+| `RequestDelegate` | 委派（委派：指向方法的型別，可像變數一樣傳遞呼叫） | ASP.NET Core | 兩個 middleware 建構子的 `next` | 代表「管線的下一站」；呼叫它才往後走 |
+
+## System.Text.Json 常用 method
+
+範圍只收程式碼真的有用到、名字看不出行為的；`TryParse`、`IsNullOrWhiteSpace` 這類標準寫法不列。
+
+| method | 所屬型別 | 做什麼 | 本專案用在哪 |
+| --- | --- | --- | --- |
+| `JsonDocument.Parse` | `JsonDocument` | 把 JSON 字串解析成唯讀文件 | `AssetService.ToDetailDto` |
+| `RootElement` | `JsonDocument` | 文件的進入點 | 同上 |
+| `Clone` | `JsonElement` | 複製成不依賴原文件的獨立節點 | 同上（文件離開 `using` 即失效，先 Clone 再回傳） |
+| `GetRawText` | `JsonElement` | 取出原始 JSON 文字，不重新序列化 | `UpdateAssetAsync` 寫入 `Config` |
+| `JsonNode.Parse` | `JsonNode` | 解析成可修改的物件樹 | `NormalizeConfig` |
+| `DeepClone` | `JsonNode` | 深複製；避開「一個節點只能有一個父節點」 | 同上（三鍵重建） |
+| `SerializeToElement` | `JsonSerializer` | 把物件轉成 `JsonElement` | 同上（重建後寫回 `Config`） |
+| `TryGetProperty`／`TryGetDouble` | `JsonElement` | 取不到時回 false，不拋例外 | `IsValidCamera` 等逐層驗證 |
+| `EnumerateArray`／`EnumerateObject` | `JsonElement` | 逐一走訪陣列元素／物件屬性 | position 逐值檢查、overrides 逐項檢查 |
+| `GetArrayLength` | `JsonElement` | 陣列長度 | position 長度須為 3 |

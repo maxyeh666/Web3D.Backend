@@ -8,6 +8,7 @@ using Web3D.Backend.Middleware;
 using Web3D.Backend.Constants;
 using System.Text;
 using Npgsql;
+using Web3D.Backend.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,7 +32,7 @@ if (string.IsNullOrWhiteSpace(adminPassword))
 {
     throw new InvalidOperationException("ADMIN_PASSWORD is not configured.");
 }
-// JWT_SECRET：簽發與驗證 token 共用的密鑰（對稱式金鑰：簽發和驗證用同一把，就能證明 token 是自己發的）。
+// JWT_SECRET：簽發與驗證 token 共用的密鑰。
 var jwtSecret = builder.Configuration["JWT_SECRET"];
 if (string.IsNullOrEmpty(jwtSecret))
 {
@@ -78,12 +79,12 @@ builder.Services.AddCors(options =>
 
 // 註冊認證機制（Authentication：確認「你是誰」）。之後每個請求，框架會從 Authorization 標頭取出 Bearer token 來驗。
 // JwtBearerDefaults.AuthenticationScheme 是字串 Bearer 的官方常數：不用手寫字串，避免拼錯。
-// AddJwtBearer(...) 括號裡的 options => … 是啟動設定（委派：傳一段設定程式碼給框架，由框架在啟動時執行）。
+// AddJwtBearer(...) 括號裡的 options 由框架在啟動時執行。
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        // 要求驗證 JWT 簽名：簽名能證明 token 沒被竄改（防偽造），簽名不對就拒收。
+        // 簽名不對就拒收。
         ValidateIssuerSigningKey = true,
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
         // 不驗發行者（issuer）與對象（audience）：自簽的管理員 token 沒有這兩個欄位。
@@ -93,7 +94,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
         ValidateLifetime = true,
         // token 過期緩衝時間：預設有 5 分鐘寬限，設成 0 與 Node 版對齊（Node 版過期即失效）。
         ClockSkew = TimeSpan.Zero,
-        // 只接受 HS256 簽章（與 Node 版相同；SHA256 是雜湊演算法名稱，不能當簽章演算法用）。
+        // 只接受 HS256 簽章（與 Node 版相同；雜湊常數不能當簽章演算法用）。
         ValidAlgorithms = new[]
         {
             SecurityAlgorithms.HmacSha256
@@ -125,7 +126,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     // 關掉框架預設的 claim 改名：否則 token 的 role 會被改寫成長 URI，RoleClaimType 就對不上。
     options.MapInboundClaims = false;
 });
-// 註冊授權服務（Authorization：判斷有沒有權限，由 [Authorize] 使用；跟認證是兩件事）。
+// 註冊授權服務（跟認證是兩件事，由 [Authorize] 使用）。
 builder.Services.AddAuthorization();
 // 取得連線字串；null 或空字串都視為沒設定（注意：空字串不會被 ?? 攔到，要用 IsNullOrWhiteSpace）
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
@@ -135,29 +136,10 @@ if (string.IsNullOrWhiteSpace(connectionString))
         "找不到連線字串 ConnectionStrings:DefaultConnection");
 }
 
-// 把 AppDbContext 加進 DI 容器（依賴注入容器：框架內建的物件工廠，負責建立並提供各類別的實例）。
-// AddDbContext 預設註冊為 Scoped（每個 HTTP 請求一份）。
-// 請求結束就釋放（連線歸還到 Npgsql 的連線池），所以絕對不要在 Service 之外保存 AppDbContext。
-// 連線逾時 Timeout = 15（建立連線最多等 15 秒）：數值向 Node 版的 connectionTimeoutMillis（15 秒）對齊，
-// 但兩個計時器不完全相同——Node 那顆是「從池子排隊拿連線的上限」（見 Node 版 db.ts），Npgsql 的 Timeout 是
-// 「建立連線」，從池子取連線的等待也吃同一個值。設 15 秒是為了 Neon（免費資料庫閒置會暫停，喚醒常超過 5 秒）：
-// 若只給 5 秒，GET /health/db 會把「DB 醒得慢」報成「服務不健康」。代價是 DB 完全不可達時約 15 秒才回 500。
-// 設定位置不同的原因：EF 只對「查詢逾時」提供選項：
-// 1. 連線逾時沒有對應的 EF 選項，只能改連線字串：用 NpgsqlConnectionStringBuilder
-//    解析後只覆寫 Timeout，其餘參數（帳密、SSL 等）原樣保留，避免自行拼接字串造成格式錯誤。
-// 2. 查詢逾時 CommandTimeout = 5（單一 SQL 最多跑 5 秒，寫在 UseNpgsql 委派上）：
-//    與 Node 版的 statement_timeout: 5_000 對齊，但機制不同——statement_timeout 是
-//    「資料庫自己中斷查詢」，CommandTimeout 是「客戶端（Npgsql）放棄等待並送取消」。
-//    兩層都設容易互鬥，刻意只留客戶端這一層；且只有真正查 DB 的請求
-//    （例如 /health/db 的 SELECT 1）才受它管。CommandTimeout 繼承自 EF Core 的
-//    RelationalDbContextOptionsBuilder，EF 會把它套用到每個 DbCommand。
-// 池上限 MaxPoolSize = 5（Npgsql 預設 100）：與 Node 版 max: 5 一致——兩版接同一顆資料庫，連線數要一起算，不能超過 max_connections。
-// 閒置回收 ConnectionIdleLifetime = 30（單位是秒；Npgsql 預設 300）：與 Node 版 idleTimeoutMillis: 30_000 對齊。
-// 精確度不同：Npgsql 只在「總連線數超過 MinPoolSize（預設 0）」時回收，且要搭 ConnectionPruningInterval
-// （預設 10 秒）的清理檢查，實際是 30～40 秒才關掉；Node 那顆是精確 30 秒，不要寫成「完全一致」。
-// 以上全部寫死在程式碼（會覆寫連線字串裡的同名設定）：本機與 Render 行為一致，不依賴部署時記得填。
-// 命名陷阱：builder 的屬性是 MaxPoolSize，連線字串關鍵字卻是 Maximum Pool Size——
-// 設定時看用的是哪一邊就寫哪一邊的名字（以 NuGet 快取的 Npgsql.xml 為準，不要靠記憶）。
+// 連線字串以程式碼為準：Timeout = 15（Neon 免費方案喚醒常超過 5 秒，與 Node 版 connectionTimeoutMillis: 15_000 對應）、
+// CommandTimeout = 5（客戶端的查詢等待上限，與 Node 版 statement_timeout: 5_000 對應，兩層不並設）、
+// MaxPoolSize = 5（兩版接同一顆資料庫，連線數一起算）、ConnectionIdleLifetime = 30。
+// 機制差異與回收節奏（約 30～40 秒、非精確 30 秒）見 docs/learning/ef-core.md。
 
 var npgsqlConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
 {
@@ -169,8 +151,7 @@ var npgsqlConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(npgsqlConnectionString, npgsql => npgsql.CommandTimeout(5)));
 
-// 註冊 AssetService 為 Scoped 服務，方便在 Controller 中注入使用
-// Scoped 服務的生命週期為每個請求，適合用於資料庫操作
+// 註冊 AssetService，為 Scoped（每個請求一份，用完釋放、連線歸還到池）。
 builder.Services.AddScoped<AssetService>();
 // AuthService 無狀態（只封裝驗密碼與簽 token），掛 Scoped 即可。
 builder.Services.AddScoped<AuthService>();
@@ -186,26 +167,27 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
         new BadRequestObjectResult(ApiErrors.InvalidRequestBody);
 });
 // 開發環境才掛 /openapi（見下面的 IsDevelopment 判斷），正式環境不掛。
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+    options.AddOperationTransformer<AuthorizeOperationTransformer>();
+});
 
 var app = builder.Build();
 
-// 掛上 HTTP 處理流程（middleware：請求進來後依序經過的一串處理步驟），順序有意義：
-// - ApiRequestLoggingMiddleware：放最外層。例外被下層轉成 500 之後才回到這裡，
-//   記到的才是實際回給前端的狀態碼，而不是拋出前的 200。
-// - ExceptionMiddleware：接住下游（auth、Controller、DB）拋出的所有例外，統一轉成 JSON 錯誤回應。
-// - UseCors：必須在 UseHttpsRedirection 之前，否則 preflight（OPTIONS）會先被 307 轉到 https，
-//   瀏覽器會直接判定 CORS 失敗。
-// - UseHttpsRedirection：把 http 導到 https。本機只開 http 埠、沒配 https 埠時，只印一次警告就放行
-//   （埠號只在啟動時判斷一次，不是每個請求）。
-// - UseAuthentication / UseAuthorization：先確認你是誰，再判斷有沒有權限；
-//   兩者都必須放在掛路由之前，否則請求還沒檢查就直接進到 Controller。
-// - MapControllers：掛路由（相當於 Node 版 app.use('/assets', assetsRouter) 那三行）。
-// - MapFallback：所有路由都沒匹配才會進來（統一 404），所以放最後。
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
+
+// 掛上 HTTP 處理流程（middleware：請求進來後依序經過的一串處理步驟），順序有意義：
+// - ApiRequestLoggingMiddleware 放最外層：例外被內層轉成 500 之後才回到這裡，
+//   記到的才是實際回給前端的狀態碼，而不是拋出前的 200。
+// - UseCors 必須在 UseHttpsRedirection 之前，否則 preflight（OPTIONS）會先被 307 轉到 https，
+//   瀏覽器會直接判定 CORS 失敗。
+// - UseAuthentication / UseAuthorization：先確認你是誰，再判斷有沒有權限；
+//   兩者都必須放在掛路由之前，否則請求還沒檢查就直接進到 Controller。
+// - MapFallback：所有路由都沒匹配才會進來（統一 404），所以放最後。
 
 app.UseMiddleware<ApiRequestLoggingMiddleware>();
 

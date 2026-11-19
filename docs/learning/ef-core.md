@@ -40,3 +40,26 @@ LINQ 方法（`Where`、`OrderBy`、`Select`）只是組裝查詢描述、不執
 池的回收節奏容易高估：`ConnectionIdleLifetime` 只在總連線數超過 `MinPoolSize`（本專案沒設，即預設 0）時才回收，且搭 `ConnectionPruningInterval`（清理間隔，預設 10 秒）分批關閉，實際約 30～40 秒才關掉——與 Node 版 `pg` 的 `idleTimeoutMillis: 30_000` 只是近似，不是相等。
 
 與 Node 版的對照：`connectionTimeoutMillis` 對 `Timeout`（同為 15 秒）、`max` 對 `MaxPoolSize`（同為 5）、`idleTimeoutMillis` 對 `ConnectionIdleLifetime`（同為 30，但回收節奏只是近似）。
+## Entity 與資料表的對應
+
+`OnModelCreating` 是「類別屬性 ↔ 資料表欄位」的對應表，用 Fluent API（以方法鏈設定，不用標記屬性）描述。`Data/AppDbContext.cs` 用到六個：
+
+| 呼叫 | 作用 | 本專案的值 |
+| --- | --- | --- |
+| `ToTable` | 資料表名稱 | `assets` |
+| `HasKey` | 主鍵 | `Id` |
+| `HasColumnName` | 欄位名稱 | `id`／`updated_at`／`model_key`（C# PascalCase，對資料庫 snake_case） |
+| `HasColumnType` | 資料庫型別 | `text`、`jsonb`、`timestamp with time zone` |
+| `IsRequired` | 該欄為 NOT NULL | 五個欄位都是 |
+| `UseIdentityAlwaysColumn` | 自動編號且不接受外部指定 | `id`（新增不要自己塞，塞了會被忽略） |
+
+為什麼全部明寫而不靠慣例：C# 屬性用 PascalCase、資料表欄位用 snake_case，兩邊慣例對不上；型別與必填若靠推斷，實際套用的結果要等查詢或 SQL 才知道。代價是新增欄位要改三處：Node 版的 migration、Entity 屬性、這裡的對應。對照 Node 版：這些資訊只存在 migration 的 SQL 裡，程式端沒有對應宣告。
+
+## EF Core 常用 method
+
+| method | 所屬型別 | 做什麼 | 本專案用在哪 |
+| --- | --- | --- | --- |
+| `ToListAsync` | `IQueryable<T>` 擴充 | 執行查詢並收成 `List<T>` | `GetAllAssetsAsync` |
+| `FirstOrDefaultAsync` | 同上 | 取第一筆，沒有就回 `null` | `GetAssetDetailByIdAsync`、`UpdateAssetAsync` |
+| `SaveChangesAsync` | `DbContext` | 把追蹤到的變更寫回，回傳影響列數 | `UpdateAssetAsync` |
+| `ExecuteSqlAsync` | `DatabaseFacade` | 直接執行 SQL，不經模型 | `/health/db` 的 `SELECT 1` |

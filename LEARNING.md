@@ -20,12 +20,13 @@
 - JSON 讀取與時間輸出（`JsonDocument`、`DateTimeOffset` 與格式字串） — 11-13
 - 認證與授權（JWT、HS256、claim、MapInboundClaims） — 11-14
 - 啟動設定與 CORS（PORT 讀取、啟動期檢查、政策白名單制） — 11-18
+- OpenAPI 文件產生（document／operation 轉換器分工、規格快照） — 11-19
 
 ## 本檔小主題
 
 ### 專案骨架
 
-樣板產生六類檔案。`Web3D.Backend.csproj`（XML 格式的專案檔）列出目標框架（`net10.0`，即 .NET 10）與 NuGet 套件（.NET 的套件來源，相當於 npm registry），地位等同 Node 版的 `package.json`；`dotnet add package` 相當於 `npm install <套件>`，`dotnet restore` 相當於 `npm install`（下載全部套件）。目前唯一的套件是 `Microsoft.AspNetCore.OpenApi`（自動產生 API 規格文件的官方套件，實作階段才會用到）。
+樣板產生六類檔案。`Web3D.Backend.csproj`（XML 格式的專案檔）列出目標框架（`net10.0`，即 .NET 10）與 NuGet 套件（.NET 的套件來源，相當於 npm registry），地位等同 Node 版的 `package.json`；`dotnet add package` 相當於 `npm install <套件>`，`dotnet restore` 相當於 `npm install`（下載全部套件）。隨著功能增加套件已擴充到 6 個（清單以 `Web3D.Backend.csproj` 的 `PackageReference` 為準）：`Microsoft.AspNetCore.Authentication.JwtBearer`（驗證請求帶來的 token；「驗證你是誰」）、`Microsoft.AspNetCore.OpenApi`（開發環境匯出 API 規格文件，11-19 已使用）、`Microsoft.EntityFrameworkCore` 與 `Npgsql.EntityFrameworkCore.PostgreSQL`（資料存取）、`Npgsql`（程式碼直接用到連線字串型別，故自行宣告）、`System.IdentityModel.Tokens.Jwt`（簽發與驗證 token 共用）。
 
 `Program.cs` 是啟動檔，對應 Node 版的 `src/index.ts`：`WebApplication.CreateBuilder(args)` 建立應用程式建構器，`builder.Services.AddControllers()` 把控制器註冊進依賴注入容器（框架內建的物件工廠，負責建立並提供各類別的實例），`builder.Build()` 建出應用本體，`app.MapControllers()` 掛上路由（相當於 `app.use('/assets', assetsRouter)` 那三行），`app.Run()` 啟動監聽（相當於 `app.listen(PORT)`）。
 
@@ -42,6 +43,16 @@
 ### 認證與授權
 
 登入流程：`POST /auth/login` 用 `FixedTimeEquals` 比對管理員密碼，通過就簽一張 HS256 的 JWT（payload 只有 `role: admin`，15 分鐘有效）；之後的寫入請求帶 `Authorization: Bearer <token>`，由 `UseAuthentication` 驗簽、`UseAuthorization` 執行 `[Authorize(Roles = "admin")]`。`MapInboundClaims` 必須關掉，否則框架會把 `role` 改名，角色就比不到了；`ClockSkew` 設 0，與 Node 版的過期判斷一致。各概念的完整說明見主題檔 [JWT 登入與授權](./docs/learning/auth.md)。
+
+## 2026-11-19 — OpenAPI 文件產生與規格快照
+
+- 問：為什麼要拆成 document 與 operation 兩個 OpenAPI 轉換器，而不是在每個 Action 上加屬性？
+
+  答：ASP.NET Core 產生 OpenAPI 文件時提供兩種掛勾（由框架在特定時機呼叫的擴充點）：document 轉換器對整份文件執行一次，operation 轉換器對每個「方法＋路徑」各執行一次。JWT 相關資訊有兩種性質：驗證方式本身（`components.securitySchemes` 裡的 `Bearer` 定義）整份文件只需要一份；「這個端點要不要帶 token」則是逐端點的資訊。因此 scheme 寫在 document 轉換器、requirement 寫在 operation 轉換器，各自只處理自己那一層；之後新增端點只要掛 `[Authorize]`，文件就會自動跟上，不必回頭改文件程式碼。若改成在每個 Action 貼文件屬性，同一份資訊等於寫兩次（`[Authorize]` 一次、文件屬性一次），兩邊遲早不一致。與 Node 版對照：Node 沒有這種掛勾，只能手寫 yaml 或在每個 route 上加 JSDoc 註解；差別在 ASP.NET Core 讀的是執行期的 metadata（隨型別與屬性編譯進組件的描述資料），Node 版讀的是註解文字，但兩者都是「讓驗證需求跟著路由定義走」。
+
+- 問：`/openapi/v1.json` 執行起來就有，為什麼還要把文件匯出成快照放進版控？
+
+  答：端點提供的內容是當下算出來的：只在 Development 環境掛載，內容由程式與 metadata 即時產生，服務沒開就拿不到。匯出成 `docs/openapi.json` 後有兩件事變得可能：版本控制看得出端點或結構的增減（diff 本身就是契約變更紀錄），外部讀者也不必啟動服務就能讀（在 GitHub 上可直接點開）。代價是快照會過期——改端點後要手動重新匯出，而且沒有任何機制提醒；這點已列在 CHANGELOG 的已知限制。
 
 ## 2026-11-18 — 啟動設定（PORT／CORS_ORIGIN）與 API 存取日誌
 
@@ -212,7 +223,7 @@
 **問答**
 - 問：`dotnet new webapi` 產生了哪些檔案，各自對應 Node.js 版的什麼東西？
 
-  答：樣板產生六類檔案。`Web3D.Backend.csproj`（XML 格式的專案檔）列出目標框架（`net10.0`，即 .NET 10）與 NuGet 套件（.NET 的套件來源，相當於 npm registry），地位等同 Node 版的 `package.json`；`dotnet add package` 相當於 `npm install <套件>`，`dotnet restore` 相當於 `npm install`（下載全部套件）。目前唯一的套件是 `Microsoft.AspNetCore.OpenApi`（自動產生 API 規格文件的官方套件，實作階段才會用到）。
+  答：樣板產生六類檔案。`Web3D.Backend.csproj`（XML 格式的專案檔）列出目標框架（`net10.0`，即 .NET 10）與 NuGet 套件（.NET 的套件來源，相當於 npm registry），地位等同 Node 版的 `package.json`；`dotnet add package` 相當於 `npm install <套件>`，`dotnet restore` 相當於 `npm install`（下載全部套件）。隨著功能增加套件已擴充到 6 個（清單以 `Web3D.Backend.csproj` 的 `PackageReference` 為準）：`Microsoft.AspNetCore.Authentication.JwtBearer`（驗證請求帶來的 token；「驗證你是誰」）、`Microsoft.AspNetCore.OpenApi`（開發環境匯出 API 規格文件，11-19 已使用）、`Microsoft.EntityFrameworkCore` 與 `Npgsql.EntityFrameworkCore.PostgreSQL`（資料存取）、`Npgsql`（程式碼直接用到連線字串型別，故自行宣告）、`System.IdentityModel.Tokens.Jwt`（簽發與驗證 token 共用）。
 
   `Program.cs` 是啟動檔，對應 Node 版的 `src/index.ts`：`WebApplication.CreateBuilder(args)` 建立應用程式建構器，`builder.Services.AddControllers()` 把控制器註冊進依賴注入容器（框架內建的物件工廠，負責建立並提供各類別的實例），`builder.Build()` 建出應用本體，`app.MapControllers()` 掛上路由（相當於 `app.use('/assets', assetsRouter)` 那三行），`app.Run()` 啟動監聽（相當於 `app.listen(PORT)`）。
 

@@ -2,6 +2,43 @@
 
 依日期記錄後端的變更與設計決策。
 
+## 2026-11-19 — 開發環境 OpenAPI 文件、JWT 標註與 .http 呼叫樣板
+
+**背景**
+- Node 版與 backlog 先前都決議不做 OpenAPI：呼叫端只有自家前端，README 的端點表格已足夠描述契約，多一份規格就是多一份要同步的維護成本（見 Node 版 CHANGELOG 設計決策）。
+- C# 版的起點不同：`Microsoft.AspNetCore.OpenApi` 本來就是專案相依套件，`Program.cs` 早有 dev-only 的 `app.MapOpenApi()`（正式環境不掛），缺的只是文件裡「哪些端點要帶 JWT」。
+- Phase 5 第一項「用 `.http` 對 C# 與 Node.js 兩版各驗一輪」缺可執行的呼叫樣板。
+
+**變更**
+- 新增 `OpenApi/BearerSecurityTransformers.cs`：`BearerSecuritySchemeTransformer`（document 層，把 `Bearer` 寫入 `components.securitySchemes`；認證方案清單裡沒有 `Bearer` 就跳過）與 `AuthorizeOperationTransformer`（operation 層，端點 metadata 有 `IAuthorizeData` 才加 `security`）。
+- `Program.cs`：`AddOpenApi()` 改為註冊上述兩個轉換器（+6/−1）；`app.MapOpenApi()` 仍只在 `IsDevelopment()` 內。
+- 新增 `HttpFiles/Requests.http`：7 支端點的呼叫樣板；`PUT /assets/{id}` 以 `{{token}}` 帶 Bearer token（`@token` 取自本檔 `login` 請求的回應本文；用法見檔首註解）。
+- 新增 `docs/openapi.json`：開發環境 `/openapi/v1.json` 匯出的規格快照（OpenAPI 3.1.1、6 個路徑、7 個操作、3 個 schema、4 個 tag；檔首 `servers` 為本機 3000）。
+- `README.md`：API 段補開發環境 OpenAPI 文件說明與快照連結；Project Structure 補 `HttpFiles/`、`OpenApi/`、`docs/openapi.json` 三行。
+- 驗證：`dotnet build` 0 警告 0 錯誤；`GET /openapi/v1.json` 產出 `securitySchemes` 只有 `Bearer`，`security` 只出現在 `PUT /assets/{id}`（與唯一的 `[Authorize(Roles = "admin")]` 一致）；`GET /assets` 前後都回 2 筆（資料未更動）、錯密碼登入 401、真密碼登入成功取 token、無 token 的 PUT 回 401、未帶 config 的 PUT 在真 token 下回 400（DTO 驗證擋下）。以上以 `PORT=3001` 執行，測試程序已停，3001 埠無殘留。
+- 註解回補與文件回填（接續同日則「註解精簡」之後）：`Controllers/HealthController.cs`（`GetHealthStatus` 方法摘要）、`Models/UpdateAssetDto.cs`（`IsValidCamera`／`IsValidCube`／`IsValidModel` 三法摘要）、`Middleware/ExceptionMiddleware.cs`（`InvokeAsync` 方法摘要改寫為一行）共 +6 行；`docs/learning/` 新增型別選擇表、介面與框架型別表、EF／System.Text.Json／ASP.NET method 速查表（`csharp-basics.md`、`ef-core.md`、`aspnet-core.md`、`auth.md`），`architecture.md` 新增「程式碼註解與文件的界線」與一行方法摘要準則。
+
+**設計決策**
+- document 與 operation 兩個轉換器分工，而不是逐一列舉需要驗證的端點：驗證需求原本就由 `[Authorize]` 表達，文件層讀同一份 metadata，端點增減不需回頭改文件程式碼。
+- 用 `IAuthorizeData` 判斷：`[Authorize]` 實作的最小介面，在 metadata 層讀授權需求，日後加 `[AllowAnonymous]` 也能反映。
+- `Bearer` 方案只在認證方案清單真有名為 `Bearer` 的項目時寫入：註冊名即 `JwtBearerDefaults.AuthenticationScheme` 的字串值，若日後改名，文件會缺 scheme 而不是寫出一份不存在的驗證方式。
+- 維持 dev-only：正式環境不掛 `/openapi`；要留檔就在本機匯出、以快照進版控。
+- 決議變更只限 C# 版：ASP.NET Core 內建產生器，成本是 2 個新檔加 1 行註冊；Node 版要另引入 yaml 與 UI、規格又得手寫，投入與產出不成比例，維持不提供。兩份 README 因此描述不同，但各自都是事實。
+- `.http` 樣板由文件產生後再手整：先由文件保證端點清單一致，再修掉產生器的變數命名（`Get_Assets{id}_id` → `@assetId`、`Get_Models{modelKey}_modelKey` → `@modelKey`）並補使用說明，避免手寫 7 支請求出錯。
+- 速查表按領域分放、不另開總表：查 method 時已知其領域（EF／JSON／JWT），就近一跳即到；集中總表反而多一層「先想到哪支檔」，且 `auth.md` 已有型別速查表的現成格式可沿用。
+- 方法摘要只留一行、超過即改放主題檔：一行是閱讀者一次讀完的上限，再長就是機制說明；留在註解裡只會與主題檔兩處同步。
+- 註解精簡（`Program.cs`、`Services/*.cs`、`Models/UpdateAssetDto.cs`、`Data/AppDbContext.cs`、`Controllers/HealthController.cs`、`Middleware/ExceptionMiddleware.cs`，共 −58 行）：刪掉與 `docs/learning/` 及 CHANGELOG 重複的機制說明與逐行翻譯；`HealthController` 順帶修掉兩處錯誤描述（`[ApiController]` 自動驗證的過度承諾、不存在的 `healthStatus`）。管線順序註解移到實際管線起點，`HasStarted` 重拋補上理由。
+
+**學習筆記**
+- 2 則，見 [LEARNING.md](./LEARNING.md) 的 2026-11-19 段（轉換器分層的理由、規格快照進版控的理由）。
+
+**已知限制 / 後續**
+- 文件裡所有回應都只有 `200 OK`、沒有回應 schema：四個 controller 都回 `IActionResult`，產生器推不出形狀；要補需改回傳型別為 `ActionResult<T>` 或加 `[ProducesResponseType]`。
+- 錯誤回應（400／401／403／404／500）未列在文件裡；契約仍以 README 的端點與錯誤碼表為準。
+- `docs/openapi.json` 是手動匯出的快照，沒有自動比對機制；改端點或改 schema 後要重新匯出。
+- Phase 5 的兩版對照驗證（`.http` 對 C# 與 Node.js 各跑一輪）尚未執行。
+
+
 ## 2026-11-18 — 啟動設定（PORT／CORS_ORIGIN）、API 存取日誌與 `/health` 連線韌性
 
 **背景**

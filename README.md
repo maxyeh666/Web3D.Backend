@@ -24,6 +24,7 @@ PostgreSQL
 - EF Core + Npgsql（PostgreSQL 的 .NET 驅動）
 - PostgreSQL
 - JWT（HS256）
+- OpenAPI（開發環境掛載 `/openapi/v1.json`，正式環境不掛）
 
 資料表結構由手寫 SQL migration 管理，EF Core 負責資料讀寫。
 Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 版不跑 migration）。
@@ -78,7 +79,7 @@ Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 
 | GET | `/health/db` | 資料庫連線狀態（含 `durationMs`） | 200（`{"status","database":{"connected"},"durationMs"}`），連線失敗 500 `INTERNAL_SERVER_ERROR` |
 | GET | `/assets` | 取得全部資產（摘要，只含辨識欄位） | 200 |
 | GET | `/assets/{id}` | 取得單一資產 | 200；id 格式不合法 400 `INVALID_ASSET_ID`、不存在 404 `ASSET_NOT_FOUND` |
-| PUT | `/assets/{id}` | 更新單一資產（需管理者 token） | 200；無 token／簽章不符／過期 401 `UNAUTHORIZED`、非 admin 角色 403 `FORBIDDEN`、內容不合法 400 `INVALID_REQUEST_BODY` |
+| PUT | `/assets/{id}` | 更新單一資產（需管理者 token） | 200；無 token／簽章不符／過期 401 `UNAUTHORIZED`、非 admin 角色 403 `FORBIDDEN`、內容不合法 400 `INVALID_REQUEST_BODY`；id 格式不合法 400 `INVALID_ASSET_ID`、不存在 404 `ASSET_NOT_FOUND` |
 | POST | `/auth/login` | 管理者登入，回傳 15 分鐘有效的 JWT | 200；密碼錯誤 401 `INVALID_CREDENTIALS` |
 | GET | `/models/{modelKey}` | 取得模型檔（白名單查表；未登記的 key 回 404 `MODEL_NOT_FOUND`） | 200；未登記 404 `MODEL_NOT_FOUND` |
 
@@ -86,6 +87,8 @@ Migration 與 Node.js 版共用同一批 SQL，目前由 Node.js 版執行（C# 
 （400 `INVALID_ASSET_ID` / `INVALID_REQUEST_BODY`、401 `INVALID_CREDENTIALS` / `UNAUTHORIZED`、
 403 `FORBIDDEN`、404 `ASSET_NOT_FOUND` / `MODEL_NOT_FOUND` / `ROUTE_NOT_FOUND`、500 `INTERNAL_SERVER_ERROR`）。
 例外、未知路由、驗證失敗、Controller 明確回錯與 `/health/db` 連線失敗都回同一形狀（含 500 `INTERNAL_SERVER_ERROR`）。
+
+開發環境（`dotnet run`）另提供 OpenAPI 文件：`GET http://localhost:3000/openapi/v1.json`（正式環境不掛載）；匯出的快照見 [`docs/openapi.json`](./docs/openapi.json)，需管理者 token 的端點（目前只有 `PUT /assets/{id}`）已在文件中以 `security` 標示。
 
 ## Model
 
@@ -132,11 +135,14 @@ Web3D.Backend/
 │                   UpdateAssetDto.cs      PUT 請求本文（逐層驗證；缺 model 補預設）
 │                   LoginDto.cs            登入請求本文（password）
 │                   ApiErrorResponse.cs    錯誤回應外層（{"error":{"code","message"}}）
+├── HttpFiles/     Requests.http          手動呼叫樣板（7 支端點；先送登入取 token）
+├── OpenApi/       BearerSecurityTransformers.cs （document 與 operation 轉換器）
 ├── ModelFiles/                       模型檔（MaterialsVariantsShoe.glb）與授權標註
 ├── Program.cs                         DI 註冊與 middleware 設定
 ├── appsettings.json                   非機密設定（連線字串留空，由 user-secrets 補）
 ├── Properties/launchSettings.json     本機啟動參數（埠 3000）
-└── docs/learning/                     筆記：architecture（架構總覽）
+├── docs/openapi.json                 開發環境匯出的 API 規格快照（OpenAPI 3.1.1）
+└── docs/learning/                    筆記：architecture（架構總覽）
                                         ＋csharp-basics（C# 與 TS 對照）
                                         ＋ef-core（查詢翻譯與型別對應）
                                         ＋aspnet-core（啟動、請求管線、驗證、DI、分層）
@@ -177,7 +183,7 @@ dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Po
 dotnet user-secrets list   # 確認 key 名稱是 ConnectionStrings:DefaultConnection
 dotnet user-secrets set "JWT_SECRET" "<簽發與驗證 token 共用的隨機長字串>"
 dotnet user-secrets set "ADMIN_PASSWORD" "<管理員登入密碼>"
-# JWT_SECRET 沒設，啟動就丟例外；ADMIN_PASSWORD 沒設，第一次登入回 500。
+# JWT_SECRET、ADMIN_PASSWORD 沒設，啟動就丟例外（以上皆在開始監聽前）。
 
 # 資料表需先存在：由 Node.js 版套用 migration（000–004）建立，C# 版不執行 migration.
 # 資料表不存在時，GET /assets 會回 42P01 relation "assets" does not exist.

@@ -20,9 +20,8 @@ namespace Web3D.Backend.Data
             // 設定 Asset entity 的資料表映射名稱、主鍵、欄位名稱與欄位屬性
             modelBuilder.Entity<Asset>(entity =>
             {
-                // 映射到資料表名稱 "assets"
                 entity.ToTable("assets");
-                // 設定主鍵為 Id 欄位
+                // Id 是自動遞增主鍵（新增不要自己塞，資料庫會忽略）。
                 entity.HasKey(asset => asset.Id);
                 // 欄位名、型別、必填直接看下面的程式碼（HasColumnName / HasColumnType / IsRequired），這裡只記程式碼看不出來的：
                 // - Id 是 GENERATED ALWAYS（自動遞增主鍵）：新增資料不要自己塞，資料庫會忽略你塞的值。

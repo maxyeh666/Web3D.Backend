@@ -16,7 +16,7 @@
 
 `Middleware/ExceptionMiddleware.cs` 以 try/catch 涵蓋下游管線：其後任一站點拋出未處理之例外，catch 區塊記錄 log（完整堆疊，僅供維運查閱），再回應固定訊息之 500，不向呼叫端揭露內部細節。Node 版對應者為 `src/errorHandler.ts` 的最後一站。
 
-位置必須在管線最前：中介層僅能攔截「下游」例外，置於後方將無法涵蓋前方站點（認證、路由、DB）。故置於 `UseHttpsRedirection` 之前。
+位置必須在管線最前：中介層僅能攔截「下游」例外，置於後方將無法涵蓋前方站點（認證、路由、DB）。故置於 `UseHttpsRedirection` 之前。回應已開始送出（`Response.HasStarted`）時無法回頭改寫：重拋中止，讓伺服器關掉連線，不吞掉例外。
 
 ## 出口四：無路由匹配 → 404 ROUTE_NOT_FOUND
 

@@ -42,8 +42,6 @@ namespace Web3D.Backend.Models
     {
         public override bool IsValid(object? value)
         {
-            // 檢查 value 是否為 JsonElement，並且 ValueKind 是否為 Object
-            // element 是 JsonElement 的別名，ValueKind 是 JsonElement 的屬性，表示 JSON 值的類型
             if (value is not JsonElement config || config.ValueKind != JsonValueKind.Object)
             {
                 return false;
@@ -52,23 +50,22 @@ namespace Web3D.Backend.Models
             return IsValidCamera(config) && IsValidCube(config) && IsValidModel(config);
         }
         
-        // 驗證 camera 物件
+        // 檢查 camera：position 為長度 3 的有限數字陣列、fov 為有限數字。
         private static bool IsValidCamera(JsonElement config)
         {
-            // 驗證JSON內的 camera 是不是物件
             if (!config.TryGetProperty("camera", out var camera) ||
                 camera.ValueKind != JsonValueKind.Object)
             {
                 return false;
             }
-            // 驗證 camera 內的 position 是不是陣列且是不是有3個內容(x,y,x座標)
+            // 驗證 camera 內的 position 是長度 3 的有限數字陣列
             if (!camera.TryGetProperty("position", out var position) ||
                 position.ValueKind != JsonValueKind.Array ||
                 position.GetArrayLength() != 3)
             {
                 return false;
             }
-            // 驗證 position 內的數值是不是有限數字
+            // 其餘位置與 fov 必須是有限數字，與上段同理
             foreach (var element in position.EnumerateArray())
             {
                 if (element.ValueKind != JsonValueKind.Number ||
@@ -78,7 +75,6 @@ namespace Web3D.Backend.Models
                     return false;
                 }
             }
-            // 驗證 camera 內的 fov 屬性是不是數字
             if (!camera.TryGetProperty("fov", out var fov) ||
                 fov.ValueKind != JsonValueKind.Number ||
                 !fov.TryGetDouble(out var fovNumber) ||
@@ -89,10 +85,9 @@ namespace Web3D.Backend.Models
 
             return true;
         }
-        // 驗證 cube 物件
+        // 檢查 cube：color 為非空白字串。
         private static bool IsValidCube(JsonElement config)
         {
-            // 驗證 JSON 內的 cube 是不是物件
             if (!config.TryGetProperty("cube", out var cube) ||
                 cube.ValueKind != JsonValueKind.Object)
             {
@@ -109,7 +104,7 @@ namespace Web3D.Backend.Models
 
             return true;
         }
-        // 驗證 model 物件
+        // 檢查 model（選填）：materialColorOverrides 的值須為 #RRGGBB。
         private static bool IsValidModel(JsonElement config)
         {
             // model 為選填：舊資料沒有這個欄位，缺就放行，由 NormalizeConfig 補預設；
@@ -129,10 +124,8 @@ namespace Web3D.Backend.Models
             {
                 return false;
             }
-            // 檢查 overrides 內的屬性（取法與上同：先 ValueKind，再取值）
             foreach(var property in overrides.EnumerateObject())
             {
-                // material ID 不可空白
                 if (string.IsNullOrWhiteSpace(property.Name))
                 {
                     return false;

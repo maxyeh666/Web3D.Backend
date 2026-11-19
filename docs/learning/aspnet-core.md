@@ -8,7 +8,7 @@
 
 `Program.cs` 沒有 Main 方法：.NET 6 之後支援頂層陳述式（top-level statements：不用寫 class Main，直接寫流程式碼、編譯器自動包成進入點），`Program.cs` 從上到下就是啟動流程：讀設定、註冊服務、建出 app、掛 middleware、`Run` 啟動。`WebApplication.CreateBuilder(args)` 建立應用程式建構器，`builder.Services.AddControllers()` 把控制器註冊進依賴注入容器，`builder.Build()` 建出應用本體，`app.MapControllers()` 掛上路由，`app.Run()` 啟動監聽。
 
-middleware（請求進來後會依序經過的一串處理步驟）順序有意義：`UseMiddleware<ExceptionMiddleware>` 掛最外層，才接得到下游任一站拋出的例外（見[統一錯誤處理](./error-handling.md)）；`UseHttpsRedirection` 先處理 http 轉 https（本機沒配 https 埠時直接放行）；`UseAuthentication` 驗 token、`UseAuthorization` 執行 `[Authorize]`，兩者都必須在掛路由之前，否則請求還沒檢查就進 Controller；掛路由相當於 Node 版掛路由器的那幾行。
+middleware（請求進來後會依序經過的一串處理步驟）順序有意義：`UseMiddleware<ExceptionMiddleware>` 掛最外層，才接得到下游任一站拋出的例外（見[統一錯誤處理](./error-handling.md)）；存取日誌（`ApiRequestLoggingMiddleware`）掛在它之外——例外被內層轉成回應之後才回到日誌，記到的狀態碼才是實際回給前端的；`UseHttpsRedirection` 先處理 http 轉 https（本機沒配 https 埠時直接放行，且只警告一次：埠號存在 `Lazy<T>`——延遲求值，第一次用到才計算、之後記住結果）；`UseCors` 排在重導之前，否則 preflight（OPTIONS）先被 307 轉去 https，瀏覽器直接判定 CORS 失敗；`UseAuthentication` 驗 token、`UseAuthorization` 執行 `[Authorize]`，兩者都必須在掛路由之前，否則請求還沒檢查就進 Controller；掛路由相當於 Node 版掛路由器的那幾行。
 
 ## 請求管線：routing、model binding、model validation
 
@@ -43,6 +43,17 @@ Controller 版的路由叫屬性路由（attribute routing）：類別上的 `[R
 驗證屬性只能讀、不能改請求內容：`IsValid` 回的是布林值，框架沒有「把驗證後的物件寫回去」的通道。所以「缺欄位補預設」這類寫入邏輯必須放在 Action 內（例如 `UpdateAssetDto.NormalizeConfig` 在 `AssetController.UpdateAsset` 開頭呼叫），寫進屬性裡也沒用，回傳值丟不出去。順序因此固定：驗證在前、補值在後，補值後的物件不再被驗一次——補值只能補「驗證已放行」的形狀，不能拿來繞過驗證。
 
 本專案已覆寫 `ApiBehaviorOptions.InvalidModelStateResponseFactory`，驗證失敗改回契約形狀的 `INVALID_REQUEST_BODY`（不是預設的 ProblemDetails）。注意註冊順序：`Configure<ApiBehaviorOptions>` 必須寫在 `AddControllers()` 之後，否則將被框架內建的預設值覆寫——本次曾因此設定失效（詳見 LEARNING.md 2026-11-15 段第一則）。四個錯誤出口的完整說明見[統一錯誤處理](./error-handling.md)。
+
+## 回應出口常用 method
+
+| method | 所屬型別 | 做什麼 | 本專案用在哪 |
+| --- | --- | --- | --- |
+| `Ok()` | `ControllerBase` | 200，包 JSON 回傳 | 各查詢 action |
+| `NotFound()` | 同上 | 404，包 `ApiErrors.*` 回傳 | 查無資料 |
+| `BadRequest()` | 同上 | 400，同上 | id 格式錯誤 |
+| `Unauthorized()` | 同上 | 401，同上 | 登入密碼錯誤 |
+| `PhysicalFile()` | 同上 | 串流回檔案，`enableRangeProcessing` 允許分段下載 | `ModelController.GetModel` |
+| `WriteAsJsonAsync()` | `HttpResponse` 擴充 | 直接把物件寫成 JSON 回應 | `ExceptionMiddleware` 的 500 |
 
 ## 依賴注入與物件生命週期
 
